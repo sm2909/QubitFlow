@@ -22,7 +22,7 @@ The defaults for primitive timings follow the logical-operation categories repor
 
 The optimized CNOT/unitary implementation has workload-dependent behavior; `t_2q=1` is an explicit experiment parameter, **not a universal paper-derived CNOT latency**. Sensitivity experiments should vary it before drawing claims dependent on two-qubit timing.
 
-A T gate consumes one buffered magic state. The aggregate factory model produces `magic_factories` states every 15 beats; the default buffer capacity is `2 * magic_factories`. The factory starts with a full buffer. This models throughput and finite buffering, not distillation stages, failure probabilities, injection routing, or spatial placement.
+A T gate consumes one buffered magic state. The aggregate factory model produces `magic_factories` states every 15 beats; the default buffer capacity is `2 * magic_factories`. The factory starts with a full buffer. The T macro is assigned 3 beats (one-beat MZZ plus a two-beat conditional S path), but this is an explicit simplified assumption: LSQCA's PM (magic-state move to CR) and SK (classical correction) instructions have variable latency. QubitFlow currently models PM availability through the finite stock only (no separate MSF-to-CR transfer latency) and assumes no additional SK delay. Thus T timing is not a complete reproduction of the paper's instruction sequence. The model also omits distillation stages, failure probabilities, injection routing, and spatial placement.
 
 ## SAM and transfer model
 
