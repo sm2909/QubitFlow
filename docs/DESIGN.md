@@ -26,7 +26,7 @@ A T gate consumes one buffered magic state. The aggregate factory model produces
 
 ## SAM and transfer model
 
-The default `sam_model="line"` models one scan-row position per bank. A transfer to a cell in row `r` takes:
+The default experiment uses 36 data cells per bank with `bank_width=6` (a 6×6 logical-cell array); this square geometry is a modelling choice consistent with the LSQCA paper's near-square bank layouts, not a physical floorplan reproduction. The default `sam_model="line"` models one scan-row position per bank. A transfer to a cell in row `r` takes:
 
 `line_access_cost + line_move_per_row * abs(r - current_scan_row)`
 
