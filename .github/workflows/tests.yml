@@ -21,8 +21,13 @@ jobs:
         run: python smoke.py
       - name: Run controlled experiment sweep
         run: python run.py
+      - name: Analyze policy results
+        run: python analyze_results.py
       - uses: actions/upload-artifact@v4
         with:
           name: qubitflow-results
-          path: results.csv
+          path: |
+            results.csv
+            workload_summary.csv
+            policy_summary.csv
           if-no-files-found: error
