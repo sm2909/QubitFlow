@@ -683,6 +683,8 @@ class Simulator:
                 # Complete zero-beat gates/transfers immediately before the policy
                 # attempts another action at the same timestamp.
                 self._complete()
+            if len(self.finished) == n:
+                break
             candidates = [end for end, _ in self.running] + [x["end"] for x in self.xfers]
             if self.ms_stock < self.cfg.timing.magic_buffer:
                 candidates.append(self.ms_next)
