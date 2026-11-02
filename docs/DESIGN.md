@@ -69,6 +69,8 @@ The joint policy remains a deterministic heuristic. Its DAG-aware next-use estim
 
 ## Fair comparisons
 
+The experiment harness evaluates CR slots 2/4/8, bank counts 1/2/4, and local Line-SAM access overhead 0/1/2 beats using a fixed 36-cell (6×6) bank. A separate CNOT-duration sensitivity sweep evaluates t_2q = 1/2/4 beats at CR=4, two banks, and one-beat local access overhead. Policy speedups are computed only within identical workload/configuration groups.
+
 - Policy comparisons must hold CR size, bank count/capacity, bank width, bus lanes, code distance, gate timings, factory count/rate/buffer, and workload fixed.
 - Architecture sensitivity varies one or more explicit hardware parameters and must be reported separately.
 - Include multiple workload families and random seeds.
