@@ -150,11 +150,20 @@ class JointPolicy:
         # Demand-load operands of ready operations before considering prefetch.
         ready = sim.ready_ops()
         ranked = sorted(ready, key=lambda i: self._rank(sim, i, critical), reverse=True)
+        # Select a priority prefix whose unique operands fit in the CR. Do not
+        # simultaneously demand-load mutually incompatible ready operations:
+        # that creates zero-time eviction/load ping-pong when CR is small.
+        selected = []
         protected = set()
-        for op_id in ranked[:max(1, sim.cfg.cr_slots // 2)]:
-            protected.update(sim.circuit.ops[op_id].qubits)
-
         for op_id in ranked:
+            operands = set(sim.circuit.ops[op_id].qubits)
+            if len(protected | operands) <= sim.cfg.cr_slots:
+                selected.append(op_id)
+                protected.update(operands)
+            if len(protected) == sim.cfg.cr_slots:
+                break
+
+        for op_id in selected:
             for q in sim.circuit.ops[op_id].qubits:
                 if sim.state(q) != "SAM":
                     continue
