@@ -16,7 +16,7 @@ class FixedOrderPolicy:
         self.lookahead, self.eviction = lookahead, eviction
         self.name = name or f"fixed(W={lookahead},{eviction})"
 
-    def _victim(self, sim, protect, target_next=None):
+    def _victim(self, sim, protect):
         candidates = [q for q in sim.loc if sim.state(q) == "CR"
                       and q not in sim.busy and q not in protect]
         if not candidates:
@@ -25,8 +25,6 @@ class FixedOrderPolicy:
             return min(candidates, key=lambda q: (sim.last_used[q], q))
         # Offline Belady oracle for fixed program-order issue.
         victim = max(candidates, key=lambda q: (sim.next_use(q), -sim.last_used[q]))
-        if target_next is not None and sim.next_use(victim) <= target_next:
-            return None
         return victim
 
     def step(self, sim):
