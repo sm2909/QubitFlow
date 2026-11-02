@@ -929,7 +929,7 @@ def validate_schedule(trace, circuit, cfg, initial_loc):
             if not isinstance(count, int) or not 0 < count <= cfg.timing.magic_factories:
                 errs.append("invalid magic-state production count")
                 continue
-                    if not isinstance(event.get("time"), (int, float)) or event["time"] <= 0:
+            if not isinstance(event.get("time"), (int, float)) or event["time"] <= 0:
                 errs.append("magic-state production has invalid timestamp")
             elif event["time"] % cfg.timing.magic_interval != 0:
                 errs.append("magic-state production is off factory cadence")
