@@ -1,5 +1,6 @@
 import os
 import tempfile
+from pathlib import Path
 import unittest
 
 import qf_core as core
@@ -103,6 +104,15 @@ class ConfigAndCircuitTests(unittest.TestCase):
         self.assertEqual(sum(op.kind == "T" for op in circ.ops), 7)
         self.assertEqual(len(circ.ops), 16)
 
+    def test_vendor_qasmbench_circuits_import(self):
+        root = Path(__file__).resolve().parents[1] / "benchmarks"
+        adder = core.from_qasm(str(root / "qasmb_adder_n28.qasm"))
+        multiplier = core.from_qasm(str(root / "qasmb_multiplier_n15.qasm"))
+        self.assertEqual(adder.n_qubits, 28)
+        self.assertEqual(multiplier.n_qubits, 15)
+        self.assertGreater(sum(op.kind == "T" for op in adder.ops), 0)
+        self.assertGreater(sum(op.kind == "T" for op in multiplier.ops), 0)
+
 
 class SimulatorTests(unittest.TestCase):
     def test_empty_circuit(self):
@@ -116,7 +126,7 @@ class SimulatorTests(unittest.TestCase):
             ("h", (0,)), ("s", (0,)), ("x", (0,)), ("t", (0,)),
             ("measure", (0,)),
         ])
-        cfg = make_cfg(1, initially_resident=True) if False else make_cfg(1)
+        cfg = make_cfg(1)
         sim, _ = run_checked(circ, "joint", cfg=cfg)
         durations = [e["end"] - e["start"] for e in sim.trace if e["kind"] == "op"]
         self.assertEqual(durations, [3, 2, 0, 3, 0])
