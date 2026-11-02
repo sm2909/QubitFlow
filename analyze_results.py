@@ -31,6 +31,8 @@ def main(path="results.csv"):
                 "cr_slots": row["cr_slots"],
                 "n_banks": row["n_banks"],
                 "line_access_cost": row.get("line_access_cost", ""),
+                "t_2q": row.get("t_2q", ""),
+                "experiment_axis": row.get("experiment_axis", ""),
                 "policy": policy,
                 "baseline_cycles": base_cycles,
                 "cycles": cycles,
