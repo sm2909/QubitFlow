@@ -16,7 +16,7 @@ finished, operands are resident+idle in CR, a parallel-op slot is free, and (T) 
 state is in stock.
 """
 from __future__ import annotations
-import bisect, math, random
+import ast, bisect, math, random, re
 from dataclasses import dataclass, field, asdict
 
 INF = float("inf")
@@ -319,9 +319,125 @@ def from_qiskit(qc, rz_t_count: int | None = None, name=None) -> Circuit:
     return Circuit.from_gates(qc.num_qubits, gates, name or getattr(qc, "name", "qiskit"))
 
 
+def _angle_value(expression: str) -> float:
+    """Evaluate the arithmetic subset used for OpenQASM rotation angles."""
+    tree = ast.parse(expression.replace("pi", "PI"), mode="eval")
+    def visit(node):
+        if isinstance(node, ast.Expression):
+            return visit(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if isinstance(node, ast.Name) and node.id == "PI":
+            return math.pi
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            value = visit(node.operand)
+            return value if isinstance(node.op, ast.UAdd) else -value
+        if isinstance(node, ast.BinOp):
+            left, right = visit(node.left), visit(node.right)
+            if isinstance(node.op, ast.Add): return left + right
+            if isinstance(node.op, ast.Sub): return left - right
+            if isinstance(node.op, ast.Mult): return left * right
+            if isinstance(node.op, ast.Div): return left / right
+        raise ValueError(f"unsupported QASM angle expression: {expression!r}")
+    return visit(tree)
+
+
+def _append_rz(gates, qubit, angle, source):
+    units = angle / (math.pi / 4)
+    nearest = round(units)
+    if abs(units - nearest) > 1e-9:
+        raise ValueError(
+            f"{source}: RZ angle {angle} is not Clifford+T exact; use a documented "
+            "approximate synthesis before importing"
+        )
+    mapping = {
+        0: [], 1: [("t", (qubit,))], 2: [("s", (qubit,))],
+        3: [("s", (qubit,)), ("t", (qubit,))],
+        4: [("z", (qubit,))],
+        5: [("sdg", (qubit,)), ("tdg", (qubit,))],
+        6: [("sdg", (qubit,))], 7: [("tdg", (qubit,))],
+    }
+    gates.extend(mapping[nearest % 8])
+
+
 def from_qasm(path: str, **kw) -> Circuit:
-    from qiskit import QuantumCircuit
-    return from_qiskit(QuantumCircuit.from_qasm_file(path), **kw)
+    """Import the supported OpenQASM 2 Clifford+T subset without optional deps.
+
+    Supports qreg/creg declarations, barriers, terminal measurements, CX,
+    Clifford/Pauli gates, SX/SXdg, T/Tdg, and exact pi/4-grid RZ rotations.
+    Classical control, reset, arbitrary rotations, and custom gate definitions
+    are intentionally rejected rather than silently approximated.
+    """
+    if kw:
+        raise TypeError(f"unsupported from_qasm options: {', '.join(kw)}")
+    with open(path, encoding="utf-8") as handle:
+        source = handle.read()
+    source = re.sub(r"//[^\\n]*", "", source)
+    qregs, cregs, gates = {}, {}, []
+    statements = [x.strip() for x in source.split(";") if x.strip()]
+    qtotal = 0
+    for statement in statements:
+        if statement.startswith("OPENQASM ") or statement.startswith("include "):
+            continue
+        decl = re.fullmatch(r"qreg\\s+(\\w+)\\s*\\[\\s*(\\d+)\\s*\\]", statement)
+        if decl:
+            name, size = decl.group(1), int(decl.group(2))
+            if name in qregs or size <= 0:
+                raise ValueError(f"invalid/duplicate QASM quantum register: {statement}")
+            qregs[name] = (qtotal, size)
+            qtotal += size
+            continue
+        decl = re.fullmatch(r"creg\\s+(\\w+)\\s*\\[\\s*(\\d+)\\s*\\]", statement)
+        if decl:
+            cregs[decl.group(1)] = int(decl.group(2))
+            continue
+        if statement.startswith("barrier"):
+            continue
+        if statement.startswith("measure "):
+            m = re.fullmatch(r"measure\\s+(\\w+)\\[(\\d+)\\]\\s*->\\s*(\\w+)\\[(\\d+)\\]", statement)
+            if not m:
+                raise ValueError(f"unsupported measurement statement: {statement}")
+            reg, idx, creg, cidx = m.groups()
+            if reg not in qregs or creg not in cregs:
+                raise ValueError(f"unknown register in measurement: {statement}")
+            base, size = qregs[reg]
+            if not 0 <= int(idx) < size or not 0 <= int(cidx) < cregs[creg]:
+                raise ValueError(f"measurement index out of range: {statement}")
+            gates.append(("measure", (base + int(idx),)))
+            continue
+        m = re.fullmatch(r"([a-zA-Z][a-zA-Z0-9_]*)\\s*(?:\\(([^()]*)\\))?\\s+(.+)", statement)
+        if not m:
+            raise ValueError(f"unsupported OpenQASM statement: {statement}")
+        gate, angle, operand_text = m.groups()
+        gate = gate.lower()
+        operands = []
+        for operand in operand_text.split(","):
+            q = re.fullmatch(r"\\s*(\\w+)\\[(\\d+)\\]\\s*", operand)
+            if not q:
+                raise ValueError(f"unsupported QASM operand: {operand}")
+            reg, idx = q.groups()
+            if reg not in qregs:
+                raise ValueError(f"unknown quantum register {reg!r}")
+            base, size = qregs[reg]
+            if not 0 <= int(idx) < size:
+                raise ValueError(f"qubit index out of range: {operand}")
+            operands.append(base + int(idx))
+        if gate == "rz":
+            if angle is None or len(operands) != 1:
+                raise ValueError(f"malformed RZ statement: {statement}")
+            _append_rz(gates, operands[0], _angle_value(angle), statement)
+        elif gate in {"sx", "sxdg"}:
+            if angle is not None or len(operands) != 1:
+                raise ValueError(f"malformed {gate} statement: {statement}")
+            phase = "s" if gate == "sx" else "sdg"
+            gates.extend([("h", operands), (phase, operands), ("h", operands)])
+        else:
+            if angle is not None:
+                raise ValueError(f"unexpected parameters for {gate}: {statement}")
+            gates.append((gate, tuple(operands)))
+    if qtotal <= 0:
+        raise ValueError("QASM file contains no quantum registers")
+    return Circuit.from_gates(qtotal, gates, name=path.rsplit("/", 1)[-1].removesuffix(".qasm"))
 
 
 def from_mqt_bench(benchmark: str, size: int, **kw) -> Circuit:
