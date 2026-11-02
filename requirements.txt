@@ -1,0 +1,4 @@
+# Core simulator and tests need only Python 3.10+.
+# Optional integrations (install separately when needed):
+# qiskit
+# mqt.bench
