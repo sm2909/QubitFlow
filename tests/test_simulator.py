@@ -77,6 +77,14 @@ class ConfigAndCircuitTests(unittest.TestCase):
         cfg = core.ArchConfig(n_banks=4, bank_capacity=8)
         self.assertEqual(cfg.bus_lanes, 4)
 
+    def test_line_access_overhead_is_explicit(self):
+        cfg = core.ArchConfig(
+            cr_slots=2, n_banks=1, bank_capacity=8, bank_width=2,
+            line_initial_row=0, line_access_cost=2,
+        )
+        self.assertEqual(cfg.xfer_time(0, 0), 2)
+        self.assertEqual(cfg.xfer_time(6, 0), 5)
+
     def test_qasm_rz_clifford_t_mapping(self):
         circ = parse_qasm("""OPENQASM 2.0;
             include "qelib1.inc";
