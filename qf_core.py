@@ -677,9 +677,24 @@ class Simulator:
     def run(self) -> Result:
         n = len(self.circuit.ops)
         msf_stall_cycles = 0
+        event_iterations = 0
+        max_event_iterations = max(1000, 100 * (n + self.circuit.n_qubits + 1))
         while len(self.finished) < n:
+            event_iterations += 1
+            if event_iterations > max_event_iterations:
+                raise DeadlockError(
+                    f"event-loop iteration limit exceeded at t={self.t}; "
+                    f"finished={len(self.finished)}/{n}, policy={self.policy.name}"
+                )
             self._tick()
+            policy_iterations = 0
             while self.policy.step(self):
+                policy_iterations += 1
+                if policy_iterations > max(100, 8 * (n + self.circuit.n_qubits + 1)):
+                    raise DeadlockError(
+                        f"policy made too many consecutive actions at t={self.t}; "
+                        f"policy={self.policy.name}"
+                    )
                 # Complete zero-beat gates/transfers immediately before the policy
                 # attempts another action at the same timestamp.
                 self._complete()
