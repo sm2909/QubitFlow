@@ -30,4 +30,5 @@ jobs:
             results.csv
             workload_summary.csv
             policy_summary.csv
+            summary.md
           if-no-files-found: error
