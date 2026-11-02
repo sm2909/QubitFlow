@@ -734,7 +734,7 @@ class Simulator:
                                   x["slot"], x["end"]) for x in self.xfers)),
                     frozenset(self.started), frozenset(self.finished),
                     tuple(self.port_free), tuple(self.lane_free), tuple(self.scan_row),
-                    self.ms_stock, self.ms_next,
+                    tuple(self.last_used), self.ms_stock, self.ms_next,
                 )
                 if signature in seen_policy_states:
                     raise DeadlockError(
