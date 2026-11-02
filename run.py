@@ -259,6 +259,8 @@ def run():
             grouped[row["comparison_group"]][row["policy"]] = row
     policy_speedups = defaultdict(list)
     workload_speedups = defaultdict(lambda: defaultdict(list))
+    access_speedups = defaultdict(lambda: defaultdict(list))
+    t2q_speedups = defaultdict(lambda: defaultdict(list))
     for group, policies in grouped.items():
         baseline = policies.get("lsqca-lazy")
         if baseline is None or baseline["cycles"] <= 0:
@@ -270,6 +272,10 @@ def run():
             speedup = baseline["cycles"] / result["cycles"]
             policy_speedups[policy].append(speedup)
             workload_speedups[workload][policy].append(speedup)
+            if baseline.get("experiment_axis") == "architecture_and_access_sensitivity":
+                access_speedups[int(baseline["line_access_cost"])][policy].append(speedup)
+            elif baseline.get("experiment_axis") == "two_qubit_timing_sensitivity":
+                t2q_speedups[int(baseline["t_2q"])][policy].append(speedup)
 
     def geo(values):
         return math.exp(sum(math.log(x) for x in values) / len(values)) if values else float("nan")
@@ -298,6 +304,25 @@ def run():
                  if workload_speedups[workload].get(p) else "—"
                  for p in sorted(policy_speedups)]
         lines.append("| " + workload + " | " + " | ".join(cells) + " |")
+
+    lines += ["", "## Local transfer-overhead sensitivity", "",
+              "| Access overhead (beats) | " + " | ".join(sorted(policy_speedups)) + " |",
+              "|---|" + "---:|" * len(policy_speedups)]
+    for access in sorted(access_speedups):
+        cells = [f"{geo(access_speedups[access].get(p, [])):.4f}x"
+                 if access_speedups[access].get(p) else "—"
+                 for p in sorted(policy_speedups)]
+        lines.append(f"| {access} | " + " | ".join(cells) + " |")
+
+    lines += ["", "## Two-qubit gate-duration sensitivity", "",
+              "| t_2q (beats) | " + " | ".join(sorted(policy_speedups)) + " |",
+              "|---|" + "---:|" * len(policy_speedups)]
+    for t_2q in sorted(t2q_speedups):
+        cells = [f"{geo(t2q_speedups[t_2q].get(p, [])):.4f}x"
+                 if t2q_speedups[t_2q].get(p) else "—"
+                 for p in sorted(policy_speedups)]
+        lines.append(f"| {t_2q} | " + " | ".join(cells) + " |")
+
     lines += [
         "",
         "## Interpretation limits",
