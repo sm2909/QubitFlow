@@ -56,7 +56,7 @@ Belady is an offline oracle for fixed-order issue, not a deployable online polic
 `run.py` runs the same policy set across a fixed-capacity architecture sensitivity matrix:
 - CR slots: 2, 4, 8.
 - SAM banks: 1, 2, 4.
-- SAM capacity per bank: 32 cells.
+- SAM capacity per bank: 36 cells, arranged as a 6×6 Line-SAM bank.
 - Local Line-SAM access overhead: 0, 1, 2 beats (0 is movement-only lower bound).
 - One transfer lane per bank by default.
 
