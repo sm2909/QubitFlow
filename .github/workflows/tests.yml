@@ -16,3 +16,10 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Run smoke test
         run: python smoke.py
+      - name: Run controlled experiment sweep
+        run: python run.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qubitflow-results
+          path: results.csv
+          if-no-files-found: error
