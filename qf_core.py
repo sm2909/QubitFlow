@@ -39,7 +39,7 @@ class Timing:
     t_pauli: int = 0
     t_measure: int = 0
     t_parity_measure: int = 1
-    t_t: int = 3  # MZZ (1 beat) + conditional S (2 beats), macro-level T.
+    t_t: int = 3  # Assumed MZZ (1) + conditional S (2); PM/SK extra latency omitted.
     # The optimized CNOT in LSQCA has variable latency. This is an explicit
     # experiment parameter, not a value asserted by the paper.
     t_2q: int = 1
