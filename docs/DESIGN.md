@@ -1,80 +1,156 @@
-# Design, assumptions, and calibration status
+# Model definition, assumptions, and validation boundary
 
-## Scope
+## Research question
 
-QubitFlow studies the interaction between:
-1. Operation selection among dependency-ready gates.
-2. Qubit residency in a small computation region (CR).
-3. Load/store transfer starts competing for bank ports and shared bus lanes.
+How do operation ordering, CR residency decisions, and transfer arbitration
+interact in a load/store architecture with a small computation region and
+banked scan-line memory?
 
-The simulator is discrete-event and operates at an abstract logical-patch/code-beat level. It does not simulate syndrome extraction, physical data-qubit movement, lattice-surgery stabilizers, routing geometry, or decoding.
+The implementation is a discrete-event scheduling model. It does not model
+physical syndrome extraction, lattice-surgery stabilizers, decoding, patch
+routing, or a full surface-code circuit.
 
-## Current architectural state
+## Time units and gate costs
 
-- Each logical qubit is in CR, in a SAM cell, or in transfer.
-- CR slots are reserved at load start and released at store completion.
-- SAM source cells are released at load completion; store destinations are reserved at store start.
-- Each bank has one serialized access port.
-- Transfers also occupy one shared bus lane for their full modeled duration.
-- Gate operations require all operands resident and idle in CR.
-- Operations obey per-qubit dependency edges and a global maximum parallel-operation count.
-- T gates consume one magic state. A finite buffer is replenished periodically by a simplified factory model.
+Time is measured in abstract code beats. The default primitive costs follow the
+logical-operation table in LSQCA:
+- H: 3 beats.
+- S/Sdg: 2 beats.
+- Pauli X/Y/Z and single-qubit measurement: 0 beats in the paper's abstraction.
+- Two-qubit Pauli measurement: 1 beat.
+- T/Tdg macro: 3 beats, representing a 1-beat MZZ measurement plus 2-beat
+  conditional S correction.
 
-## SAM timing models
+The CNOT operation in the optimized instruction set has compilation-dependent
+latency. QubitFlow exposes `t_2q` as an experiment parameter; its default is
+not claimed to be a universal LSQCA timing.
 
-`sam_model="depth"` preserves the original stateless placeholder:
-`xfer_base + xfer_per_depth * row`.
+## Line-SAM transfer abstraction
 
-`sam_model="line"` models a scan line with per-bank current-row state:
-`line_access_cost + line_move_per_row * abs(target_row - current_row)`.
+Each bank has one scan line. A cell index maps to row
+`row = cell // bank_width`. The scan line starts at the configured row
+(default: middle row). A transfer to a target row costs
 
-The scan row changes when a transfer completes. This is deliberately a simple, configurable abstraction. It is **not yet a calibrated implementation of Point-SAM or Line-SAM from LSQCA**. Do not quote its default timing values as paper results. Before making architecture claims:
-- Verify the paper's exact Line-SAM geometry and movement sequence.
-- Derive transfer latency from the chosen physical operation and resource assumptions.
-- Check whether row position persists independently per bank or is shared by the physical layout.
-- Model multiple scan lines / access ports only when supported by the selected architecture.
-- Compare predicted access costs against examples or tables in the paper.
+`T_transfer = line_move_per_row * abs(target_row - current_row)`.
+
+The default is one beat per row, so the scan-line movement term equals the
+vertical distance H. Same-row access has zero scan-line movement cost and is
+represented as a zero-duration transfer event. The scan-line position updates
+when the transfer completes.
+
+This captures only the Line-SAM row-travel term. It does not claim to model
+port patch movement, horizontal geometry, lattice-surgery operations, or
+multi-scan-line hardware. Point-SAM is not implemented. The legacy
+`sam_model="depth"` option is retained only for comparison with the original
+placeholder and is not paper-calibrated.
+
+## Banks and transfer resources
+
+- Every SAM bank has one serialized access port.
+- Different banks may transfer concurrently.
+- By default there is one transfer lane per bank, so the shared interconnect
+  does not artificially serialize independent banks.
+- Setting `bus_lanes` below the bank count is an explicit shared-interconnect
+  sensitivity experiment.
+- Load reserves a CR slot at start and releases its SAM source cell at
+  completion. Store reserves a SAM destination at start and releases the CR
+  slot at completion.
+
+The shared-lane model is an abstraction; physical route topology and
+cross-bank data movement are not modeled.
+
+## Magic-state factories
+
+The aggregate factory model produces up to `magic_factories` states every
+`magic_interval` beats. The default interval is 15 beats per factory and the
+default buffer is `2 * magic_factories`. Production is capped at free buffer
+capacity; excess output is discarded. T/Tdg consumes one state at issue.
+
+This is a throughput/buffer abstraction. It does not model distillation
+circuits, probabilistic failures, injection ports, factory placement, or
+routing from factory to CR.
+
+## Circuit import and workload provenance
+
+The bundled QASMBench inputs are transpiled OpenQASM 2 files. The standard
+library parser supports only the subset used by those files: register
+declarations, barriers, terminal measurements, CX, Clifford/Pauli gates,
+SX/SXdg, T/Tdg, and exact pi/4-grid RZ rotations. SX is expanded to H-S-H;
+RZ is mapped exactly to Clifford+T up to global phase. Off-grid rotations,
+classical control, resets, and unknown gates are rejected.
+
+The adder10, bigadder18, and multiplier15 files are from PNNL QASMBench.
+Their source paths and redistribution license/notice are retained under
+`benchmarks/`. They are useful real circuit inputs, but the model does not
+simulate quantum-state semantics.
 
 ## Scheduling policies
 
-The fixed-order policies only start operations in circuit order. Their Belady variant uses next operation ID as next-use distance and is an offline baseline.
+- Fixed-order policies issue the lowest-ID dependency-ready operation only.
+- LRU evicts the least recently used idle CR qubit.
+- Belady is an offline farthest-next-use baseline over each qubit's remaining
+  ordered use chain.
+- DAG policies select among dependency-ready operations using resident
+  operand count, static unit-weight critical-path length, and deterministic
+  operation-ID tie-breaking.
+- Joint policy combines DAG issue, demand loads, farthest-next-use CR eviction,
+  and optional prefetch when free CR slots exist.
 
-The joint heuristic:
-- Selects among dependency-ready operations.
-- Prefers resident operands and longer static critical paths.
-- Loads operands for high-priority ready operations.
-- Evicts idle CR qubits with distant next use, protecting selected ready operands.
-- Optionally prefetches a small number of operands for future operations when free slots exist.
-- Relies on simulator methods for bank and bus arbitration.
+The joint policy is a deterministic heuristic. It is not optimal. Its critical
+path uses unit gate weights; replace it with duration-weighted costs only after
+the architecture timing model is fixed. Prefetch is deliberately conservative
+and does not evict qubits to make speculative room.
 
-This is a first heuristic for controlled experiments, not a claim of global optimality. The static critical-path calculation uses the circuit DAG and unit operation weights; replace with duration-weighted critical paths when the timing model is stable. The current future-use estimate is lowest unscheduled operation ID, which is a heuristic under reordering, not a full DAG-aware liveness metric.
+## Validation
 
-## Magic-state model
+The trace validator independently checks:
+- every circuit operation appears exactly once with matching operands/duration;
+- dependency order and per-qubit non-overlap;
+- valid initial placement and legal CR/SAM state transitions;
+- CR-slot and SAM-cell occupancy;
+- per-bank ports, bus lanes, and maximum parallel operations;
+- Line-SAM row transitions and transfer durations;
+- magic-state consumption, production cadence, and buffer capacity.
 
-The factory starts with a full finite buffer. Once consumption creates room, it produces one state every `magic_interval` beats until full. This is a simplified supply model. It does not model distillation stages, probabilistic failures, injection ports, or spatial factory routing. The validator checks explicit production/consumption events and buffer bounds.
+Zero-duration logical operations and same-row transfers are legal. The event
+engine completes zero-duration events at the current simulation timestamp
+before progressing time.
 
 ## Metrics
 
-- `cycles`: makespan in abstract beats.
-- `exec_busy_cycles`: union of intervals during which at least one gate executes.
-- `mem_wait_cycles`: makespan minus execution-busy union; this includes all non-compute time and is not exclusively memory wait.
-- `total_transfer_cycles`: sum of individual transfer durations; overlapping transfers are counted separately.
-- `msf_stall_cycles`: current simulator estimate; interpret cautiously until validated against a dedicated event-level stall attribution model.
-- `physical_qubits`: coarse tile-area estimate using `2d^2-1` per tile, not a complete physical resource accounting.
+- `cycles`: simulated makespan.
+- `exec_busy_cycles`: union of gate-execution intervals.
+- `non_exec_cycles`: makespan minus execution-busy union; not synonymous with
+  memory wait.
+- `msf_stall_cycles`: estimated interval where a T operation is ready,
+  operands are resident and idle, a parallel-op slot is available, and stock
+  is empty.
+- `logical_cells`: SAM data cells + scan-line auxiliary cells + CR cells.
+- `memory_density`: SAM data cells divided by the above logical-cell total.
+  These are architectural cell-accounting metrics, not physical-qubit counts.
+- `total_transfer_cycles`: sum of transfer durations, not transfer makespan.
 
-## Fair comparisons
+## Fair experiment protocol
 
-- For scheduler comparisons, use identical CR size, bank count/capacity, bus lanes, timing, code distance, and MSF configuration.
-- For architecture comparisons, state whether physical-qubit budget or storage capacity is held constant.
-- Report multiple workloads and seeds; don't infer a policy advantage from the smoke workload.
-- Include the complete configuration and policy parameters with every result.
-- Compare makespan first; transfer count alone is not a performance metric.
+- Compare policies only at identical CR capacity, bank count/capacity,
+  bank width, lane count, operation parallelism, gate timings, and factory
+  settings.
+- Report the full configuration with every result.
+- The default sweep varies CR slots and bank count, and therefore is an
+  architecture sensitivity experiment.
+- Use multiple structurally distinct circuits; do not treat synthetic random
+  workloads or the topology-only QFT generator as application results.
+- Makespan is the primary metric. Transfer count alone is not a performance
+  metric.
+- Report the baseline and relative speedup per workload/configuration; do not
+  pool raw makespans across different circuits.
 
-## Immediate calibration / research checklist
+## Explicitly out of scope / future work
 
-1. Re-read LSQCA's Point-SAM and Line-SAM sections and reproduce one hand-worked access-time example.
-2. Confirm code-beat gate durations and magic-state production/buffer assumptions from the paper's tables.
-3. Determine whether the bus-lane abstraction double-counts or omits movement constraints for the selected layout.
-4. Add QASM import tests for exact Clifford+T rotations; off-grid rotations should remain rejected unless explicitly approximated.
-5. Replace operation-ID next-use with DAG-aware liveness / earliest-use estimates before claiming the joint scheduler has an optimal replacement policy.
-6. Attribute memory, dependency, resource, and MSF stalls separately before drawing bottleneck conclusions.
+1. A physically detailed Point-SAM model and comparison with Line-SAM.
+2. Patch-routing and lattice-surgery port geometry.
+3. Duration-weighted scheduling and DAG-aware earliest-use/liveness estimates.
+4. Exact operation-specific optimized CNOT compilation latency.
+5. A distillation/injection-network model beyond aggregate factory throughput.
+6. Physical-qubit/area estimation calibrated to the complete LSQCA floorplan.
+7. Functional quantum-state equivalence checking of imported circuits.
