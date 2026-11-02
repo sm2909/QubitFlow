@@ -119,6 +119,8 @@ class ArchConfig:
         rows = math.ceil(self.bank_capacity / self.bank_width)
         if self.line_initial_row is None:
             object.__setattr__(self, "line_initial_row", 0)
+        if not isinstance(self.line_initial_row, int) or isinstance(self.line_initial_row, bool):
+            raise ValueError("line_initial_row must be an integer")
         if not 0 <= self.line_initial_row < rows:
             raise ValueError("line_initial_row is outside the SAM bank")
 
@@ -298,11 +300,16 @@ def from_qiskit(qc, rz_t_count: int | None = None, name=None) -> Circuit:
     basis = ["cx", "h", "s", "sdg", "t", "tdg", "x", "y", "z", "rz", "measure"]
     qc = transpile(qc, basis_gates=basis, optimization_level=0)
     gates = []
+    measured_qubits = set()
     for inst in qc.data:
         gate = inst.operation.name.lower()
         qubits = tuple(qc.find_bit(q).index for q in inst.qubits)
         if gate in ("barrier", "delay"):
             continue
+        if gate == "measure":
+            measured_qubits.update(qubits)
+        elif any(q in measured_qubits for q in qubits):
+            raise ValueError("Qiskit operations after measurement are unsupported")
         if gate == "rz":
             angle = float(inst.operation.params[0])
             units = angle / (math.pi / 4)
