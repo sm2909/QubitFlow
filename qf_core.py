@@ -567,11 +567,14 @@ class Simulator:
             if not candidates:
                 raise DeadlockError(f"no progress at t={self.t}, policy={self.policy.name}")
             next_time = min(candidates)
-            t_ready = any(
-                self.circuit.ops[i].kind == "T"
-                and all(self.state(q) == "CR" and q not in self.busy
-                        for q in self.circuit.ops[i].qubits)
-                for i in self.ready_ops()
+            t_ready = (
+                len(self.running) < self.cfg.max_parallel_ops
+                and any(
+                    self.circuit.ops[i].kind == "T"
+                    and all(self.state(q) == "CR" and q not in self.busy
+                            for q in self.circuit.ops[i].qubits)
+                    for i in self.ready_ops()
+                )
             )
             if self.ms_stock <= 0 and t_ready:
                 msf_stall_cycles += next_time - self.t
@@ -593,10 +596,13 @@ class Simulator:
         stores = sum(e["kind"] == "store" for e in self.trace)
         transfer_cycles = sum(e["end"] - e["start"] for e in self.trace
                               if e["kind"] in ("load", "store"))
+        logical_cells = self.cfg.logical_cell_count()
+        sam_data_cells = self.cfg.n_banks * self.cfg.bank_capacity
+        memory_density = sam_data_cells / logical_cells
         return Result(self.circuit.name, self.policy.name, self.t, loads, stores,
-                      loads + stores, busy, self.t - busy, self.cfg.physical_qubits(),
-                      self.cfg.cr_slots, self.cfg.n_banks, self.cfg.bank_capacity,
-                      msf_stall_cycles, transfer_cycles)
+                      loads + stores, busy, self.t - busy, logical_cells,
+                      memory_density, self.cfg.cr_slots, self.cfg.n_banks,
+                      self.cfg.bank_capacity, msf_stall_cycles, transfer_cycles)
 
 # ============================================================================
 # 4. VALIDATE
@@ -674,16 +680,30 @@ def validate_schedule(trace, circuit, cfg, initial_loc):
     slot_intervals, cell_intervals = {}, {}
     for q, events in per_q.items():
         initial = initial_loc.get(q)
-        if not isinstance(initial, tuple) or len(initial) != 3 or initial[0] != "SAM":
+        if not isinstance(initial, tuple) or not initial:
             errs.append(f"q{q}: invalid/missing initial location")
             continue
-        _, bank, cell = initial
-        if not (isinstance(bank, int) and 0 <= bank < cfg.n_banks
-                and isinstance(cell, int) and 0 <= cell < cfg.bank_capacity):
-            errs.append(f"q{q}: initial SAM location out of range")
+        if initial[0] == "SAM":
+            if len(initial) != 3:
+                errs.append(f"q{q}: malformed initial SAM location")
+                continue
+            _, bank, cell = initial
+            if not (isinstance(bank, int) and 0 <= bank < cfg.n_banks
+                    and isinstance(cell, int) and 0 <= cell < cfg.bank_capacity):
+                errs.append(f"q{q}: initial SAM location out of range")
+                continue
+            state, current_cell, current_slot = "SAM", (bank, cell), None
+            cell_start, slot_start = 0, None
+        elif initial[0] == "CR":
+            if len(initial) != 2 or not isinstance(initial[1], int) or not 0 <= initial[1] < cfg.cr_slots:
+                errs.append(f"q{q}: invalid initial CR slot")
+                continue
+            state, current_cell, current_slot = "CR", None, initial[1]
+            cell_start, slot_start = None, 0
+        else:
+            errs.append(f"q{q}: unsupported initial location")
             continue
-        state, current_cell, current_slot = "SAM", (bank, cell), None
-        cell_start, slot_start, previous_end = 0, None, 0
+        previous_end = 0
         events.sort(key=lambda x: (x["start"], x["end"]))
         for e in events:
             if e["start"] < previous_end:
@@ -722,9 +742,15 @@ def validate_schedule(trace, circuit, cfg, initial_loc):
             slot_intervals.setdefault(current_slot, []).append((slot_start, INF, q))
 
     initial_cells = [(initial_loc[q][1], initial_loc[q][2]) for q in initial_loc
-                     if isinstance(initial_loc[q], tuple) and len(initial_loc[q]) == 3]
+                     if isinstance(initial_loc[q], tuple) and len(initial_loc[q]) == 3
+                     and initial_loc[q][0] == "SAM"]
+    initial_slots = [initial_loc[q][1] for q in initial_loc
+                     if isinstance(initial_loc[q], tuple) and len(initial_loc[q]) == 2
+                     and initial_loc[q][0] == "CR"]
     if len(initial_cells) != len(set(initial_cells)):
         errs.append("initial placement assigns multiple qubits to one cell")
+    if len(initial_slots) != len(set(initial_slots)):
+        errs.append("initial placement assigns multiple qubits to one CR slot")
     if set(initial_loc) != set(range(circuit.n_qubits)):
         errs.append("initial placement does not cover exactly all circuit qubits")
 
