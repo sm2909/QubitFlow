@@ -39,6 +39,12 @@ class ConfigAndCircuitTests(unittest.TestCase):
         b = core.random_circuit(8, 40, seed=123)
         self.assertEqual(a.ops, b.ops)
 
+    def test_qft_topology_generator(self):
+        circ = core.qft(5)
+        self.assertEqual(circ.n_qubits, 5)
+        self.assertGreater(len(circ.ops), 5)
+        self.assertTrue(all(len(op.qubits) in (1, 2) for op in circ.ops))
+
     def test_line_sam_latency_tracks_scan_row(self):
         cfg = core.ArchConfig(cr_slots=2, n_banks=1, bank_capacity=16,
                               bank_width=4, line_initial_row=0,
