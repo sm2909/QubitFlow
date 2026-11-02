@@ -131,7 +131,8 @@ def run():
                     "gate_counts": json.dumps(circuit.stats(), sort_keys=True),
                     "python_version": platform.python_version(),
                     "policy_params": json.dumps(params, sort_keys=True),
-                    "comparison_group": f"{spec['tag']}:CR{cr_slots}:B{n_banks}:access{line_access_cost}",
+                    "experiment_axis": "architecture_and_access_sensitivity",
+                    "comparison_group": f"{spec['tag']}:arch:CR{cr_slots}:B{n_banks}:access{line_access_cost}:t2q{cfg.timing.t_2q}",
                 })
                 rows.append(result)
                 print(f"  CR={cr_slots:2d} banks={n_banks} "
@@ -162,14 +163,85 @@ def run():
                     "bus_lanes": cfg.bus_lanes,
                     "sam_model": cfg.sam_model,
                     "line_initial_row": cfg.line_initial_row,
+                    "line_access_cost": cfg.line_access_cost,
                     "line_move_per_row": cfg.line_move_per_row,
+                    "d": cfg.d,
+                    "max_parallel_ops": cfg.max_parallel_ops,
+                    "t_h": cfg.timing.t_h,
+                    "t_s": cfg.timing.t_s,
+                    "t_pauli": cfg.timing.t_pauli,
+                    "t_measure": cfg.timing.t_measure,
+                    "t_parity_measure": cfg.timing.t_parity_measure,
+                    "t_t": cfg.timing.t_t,
+                    "t_2q": cfg.timing.t_2q,
+                    "n_qubits": circuit.n_qubits,
+                    "n_ops": len(circuit.ops),
+                    "gate_counts": json.dumps(circuit.stats(), sort_keys=True),
+                    "experiment_axis": "architecture_and_access_sensitivity",
                     "magic_factories": cfg.timing.magic_factories,
                     "magic_interval": cfg.timing.magic_interval,
                     "magic_buffer": cfg.timing.magic_buffer,
                     "python_version": platform.python_version(),
                     "policy_params": "{}",
-                    "comparison_group": f"{spec['tag']}:CR{cr_slots}:B{n_banks}",
+                    "comparison_group": f"{spec['tag']}:arch:CR{cr_slots}:B{n_banks}:access{line_access_cost}:t2q{cfg.timing.t_2q}",
                     "policy": "all_qubits_in_CR_lower_bound",
+                })
+                rows.append(result)
+
+    # Isolate two-qubit gate-duration sensitivity at one fixed architecture.
+    # These groups are separate from the architecture/access matrix above.
+    for spec in CIRCUITS:
+        circuit = build_circuit(spec)
+        for t_2q in (1, 2, 4):
+            point = {
+                "cr_slots": 4,
+                "n_banks": 2,
+                "line_access_cost": 1,
+                "timing.t_2q": t_2q,
+            }
+            cfg = build_cfg(circuit, point)
+            for policy_name, params in POLICIES:
+                policy = make_policy(policy_name, **params)
+                sim = core.Simulator(circuit, cfg, policy)
+                result = sim.run().asdict()
+                errors = core.validate_schedule(sim.trace, circuit, cfg, sim.initial_loc)
+                if errors:
+                    raise AssertionError(
+                        f"invalid t2q-sensitivity trace {spec['tag']} t2q={t_2q} "
+                        f"{policy.name}: {errors[:8]}"
+                    )
+                result.update({
+                    "workload_tag": spec["tag"],
+                    "source_kind": spec["kind"],
+                    "seed": spec.get("seed", ""),
+                    "cr_slots": cfg.cr_slots,
+                    "n_banks": cfg.n_banks,
+                    "bank_capacity": cfg.bank_capacity,
+                    "bank_width": cfg.bank_width,
+                    "bus_lanes": cfg.bus_lanes,
+                    "sam_model": cfg.sam_model,
+                    "line_initial_row": cfg.line_initial_row,
+                    "line_access_cost": cfg.line_access_cost,
+                    "line_move_per_row": cfg.line_move_per_row,
+                    "d": cfg.d,
+                    "max_parallel_ops": cfg.max_parallel_ops,
+                    "t_h": cfg.timing.t_h,
+                    "t_s": cfg.timing.t_s,
+                    "t_pauli": cfg.timing.t_pauli,
+                    "t_measure": cfg.timing.t_measure,
+                    "t_parity_measure": cfg.timing.t_parity_measure,
+                    "t_t": cfg.timing.t_t,
+                    "t_2q": cfg.timing.t_2q,
+                    "magic_factories": cfg.timing.magic_factories,
+                    "magic_interval": cfg.timing.magic_interval,
+                    "magic_buffer": cfg.timing.magic_buffer,
+                    "n_qubits": circuit.n_qubits,
+                    "n_ops": len(circuit.ops),
+                    "gate_counts": json.dumps(circuit.stats(), sort_keys=True),
+                    "python_version": platform.python_version(),
+                    "policy_params": json.dumps(params, sort_keys=True),
+                    "experiment_axis": "two_qubit_timing_sensitivity",
+                    "comparison_group": f"{spec['tag']}:t2q_sensitivity:CR4:B2:access1:t2q{t_2q}",
                 })
                 rows.append(result)
 
