@@ -47,7 +47,7 @@ The synthetic `qft_topology` generator is only an interaction-topology workload:
 | `fixed_prefetch(W)` | Program-order issue, bounded lookahead prefetch, LRU |
 | `fixed_belady(W)` | Program-order issue, offline farthest-next-use eviction |
 | `dag_no_prefetch` | DAG-ready operation selection, demand loads, no prefetch |
-| `joint` | DAG-ready issue, weighted critical-path priority, DAG-aware eviction and conservative prefetch |
+| `joint-prefetch(W)` | DAG-ready issue, weighted critical-path priority, DAG-aware eviction, prefetch width W=1/2/4 |
 
 Belady is an offline oracle for fixed-order issue, not a deployable online policy. The joint policy is a heuristic, not an optimizer or proof of optimality.
 
