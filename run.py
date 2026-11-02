@@ -24,7 +24,9 @@ POLICIES = [
     ("fixed_belady", {"lookahead": 4}),
     ("fixed_belady", {"lookahead": 8}),
     ("dag_no_prefetch", {}),
+    ("joint", {"prefetch_width": 1}),
     ("joint", {"prefetch_width": 2}),
+    ("joint", {"prefetch_width": 4}),
 ]
 
 CIRCUITS = [
