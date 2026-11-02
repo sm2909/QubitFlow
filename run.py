@@ -1,45 +1,43 @@
-"""Reproducible QubitFlow experiment harness.
+"""Reproducible QubitFlow scheduling experiments.
 
-Run: python run.py [--json experiment.json] [--no-validate]
-The default matrix is intentionally modest. Increase workload sizes after smoke/tests pass.
+Run: python run.py
+Outputs raw CSV rows and a compact per-workload summary. All policy comparisons
+within an architecture use identical capacities, timing, and bank geometry.
 """
 import argparse
 import csv
 import itertools
 import json
 import math
-import platform
-import random
+import os
 import qf_core as core
 from qf_policies import make_policy
 
 EXPERIMENT = {
     "circuits": [
-        {"kind": "adder", "n": 2, "tag": "correctness"},
-        {"kind": "adder", "n": 8, "tag": "ripple_adder"},
-        {"kind": "qft", "n": 12, "tag": "qft_topology"},
-        {"kind": "random", "n": 24, "ops": 180, "seed": 7, "tag": "high_parallelism"},
-        # Optional full arithmetic benchmark via MQT Bench:
-        # {"kind": "mqt", "name": "multiplier", "n": 8, "tag": "multiplier"},
-        # {"kind": "qasm", "path": "benchmarks/example.qasm"},
+        {"kind": "qasm", "path": "benchmarks/adder_n10.qasm", "tag": "qasmb_adder10"},
+        {"kind": "qasm", "path": "benchmarks/bigadder_n18.qasm", "tag": "qasmb_bigadder18"},
+        {"kind": "qasm", "path": "benchmarks/multiplier_n15.qasm", "tag": "qasmb_multiplier15"},
     ],
-    "arch": {"d": 11, "cr_slots": 4, "n_banks": 2, "bank_capacity": None,
-             "bus_lanes": 1, "bank_width": 8, "max_parallel_ops": 2,
-             "sam_model": "line"},
-    "timing": {},
-    "sweep": {"cr_slots": [2, 4], "n_banks": [1, 2]},
+    "arch": {
+        "d": 11, "cr_slots": 4, "n_banks": 2, "bank_capacity": 32,
+        "bank_width": 4, "max_parallel_ops": 4, "sam_model": "line",
+        "line_move_per_row": 1,
+    },
+    "timing": {
+        "t_2q": 1, "t_h": 3, "t_s": 2, "t_t": 3,
+        "magic_interval": 15, "magic_factories": 1,
+    },
+    "sweep": {"cr_slots": [2, 4, 8], "n_banks": [1, 2, 4]},
     "policies": [
         ("lsqca_lazy", {}),
-        ("fixed_prefetch", {"lookahead": 1}),
         ("fixed_prefetch", {"lookahead": 2}),
-        ("fixed_prefetch", {"lookahead": 4}),
         ("fixed_prefetch", {"lookahead": 8}),
-        ("fixed_belady", {"lookahead": 1}),
         ("fixed_belady", {"lookahead": 2}),
-        ("fixed_belady", {"lookahead": 4}),
         ("fixed_belady", {"lookahead": 8}),
         ("dag_no_prefetch", {}),
         ("joint", {"prefetch_width": 2}),
+        ("joint", {"prefetch_width": 4}),
     ],
     "validate": True,
     "csv": "results.csv",
@@ -64,9 +62,10 @@ def build_circuit(spec):
 def build_cfg(circuit, arch, timing, point):
     arch, timing = dict(arch), dict(timing)
     for key, value in point.items():
-        (timing if key.startswith("timing.") else arch)[key.removeprefix("timing.")] = value
-    if arch.get("bank_capacity") is None:
-        arch["bank_capacity"] = math.ceil(circuit.n_qubits / arch["n_banks"])
+        if key.startswith("timing."):
+            timing[key.removeprefix("timing.")] = value
+        else:
+            arch[key] = value
     return core.ArchConfig(**arch, timing=core.Timing(**timing))
 
 
@@ -80,7 +79,8 @@ def run(experiment, validate=True):
     rows = []
     for spec in experiment["circuits"]:
         circuit = build_circuit(spec)
-        print(f"\n== {circuit.name}: {circuit.stats()}")
+        stats = circuit.stats()
+        print(f"\n== {spec.get('tag', circuit.name)}: {stats}")
         for point in sweep_points(experiment.get("sweep", {})):
             cfg = build_cfg(circuit, experiment["arch"], experiment.get("timing", {}), point)
             for policy_name, params in experiment["policies"]:
@@ -91,18 +91,28 @@ def run(experiment, validate=True):
                     errors = core.validate_schedule(sim.trace, circuit, cfg, sim.initial_loc)
                     if errors:
                         raise AssertionError(
-                            f"invalid schedule ({policy.name}, {point}): {errors[:10]}"
+                            f"invalid schedule ({circuit.name}, {policy.name}, {point}): {errors[:10]}"
                         )
                 result.update(point)
-                result["workload_tag"] = spec.get("tag", spec["kind"])
-                result["seed"] = spec.get("seed", "")
-                result["sam_model"] = cfg.sam_model
-                result["prefetch_params"] = json.dumps(params, sort_keys=True)
+                result.update({
+                    "workload_tag": spec.get("tag", circuit.name),
+                    "n_qubits": circuit.n_qubits,
+                    "n_ops": len(circuit.ops),
+                    "gate_counts": json.dumps(stats, sort_keys=True),
+                    "sam_model": cfg.sam_model,
+                    "line_move_per_row": cfg.line_move_per_row,
+                    "bus_lanes": cfg.bus_lanes,
+                    "max_parallel_ops": cfg.max_parallel_ops,
+                    "magic_factories": cfg.timing.magic_factories,
+                    "magic_interval": cfg.timing.magic_interval,
+                    "magic_buffer": cfg.timing.magic_buffer,
+                    "policy_params": json.dumps(params, sort_keys=True),
+                    "model_status": "abstract_line_sam_scheduling_model",
+                })
                 rows.append(result)
-                print(f"  {str(point):30s} {result['policy']:22s} "
+                print(f"  {str(point):24s} {result['policy']:24s} "
                       f"cycles={result['cycles']:7d} transfers={result['transfers']:5d} "
-                      f"mem_wait={result['mem_wait_cycles']:6d} "
-                      f"msf_wait={result['msf_stall_cycles']:6d}")
+                      f"MSF_blocked={result['msf_stall_cycles']:5d}")
     if experiment.get("csv") and rows:
         columns = list(dict.fromkeys(key for row in rows for key in row))
         with open(experiment["csv"], "w", newline="") as handle:
@@ -118,5 +128,9 @@ if __name__ == "__main__":
     parser.add_argument("--json")
     parser.add_argument("--no-validate", action="store_true")
     args = parser.parse_args()
-    experiment = json.load(open(args.json)) if args.json else EXPERIMENT
+    if args.json:
+        with open(args.json, encoding="utf-8") as handle:
+            experiment = json.load(handle)
+    else:
+        experiment = EXPERIMENT
     run(experiment, validate=experiment.get("validate", True) and not args.no_validate)
