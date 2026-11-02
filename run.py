@@ -44,9 +44,10 @@ CIRCUITS = [
 ARCH_BASE = {
     "d": 11, "cr_slots": 4, "n_banks": 2, "bank_capacity": 32,
     "bank_width": 8, "bus_lanes": None, "max_parallel_ops": 4,
-    "sam_model": "line", "line_move_per_row": 1, "line_initial_row": 0,
+    "sam_model": "line", "line_access_cost": 0, "line_move_per_row": 1, "line_initial_row": 0,
 }
-ARCH_SWEEP = {"cr_slots": [2, 4, 8], "n_banks": [1, 2, 4]}
+ARCH_SWEEP = {"cr_slots": [2, 4, 8], "n_banks": [1, 2, 4],
+              "line_access_cost": [0, 1, 2]}
 TIMING_BASE = {}
 
 
@@ -80,10 +81,15 @@ def run():
     for spec in CIRCUITS:
         circuit = build_circuit(spec)
         print(f"\n== {spec['tag']}: {circuit.stats()}")
-        for cr_slots, n_banks in itertools.product(
-            ARCH_SWEEP["cr_slots"], ARCH_SWEEP["n_banks"]
+        for cr_slots, n_banks, line_access_cost in itertools.product(
+            ARCH_SWEEP["cr_slots"], ARCH_SWEEP["n_banks"],
+            ARCH_SWEEP["line_access_cost"],
         ):
-            point = {"cr_slots": cr_slots, "n_banks": n_banks}
+            point = {
+                "cr_slots": cr_slots,
+                "n_banks": n_banks,
+                "line_access_cost": line_access_cost,
+            }
             cfg = build_cfg(circuit, point)
             for policy_name, params in POLICIES:
                 policy = make_policy(policy_name, **params)
@@ -105,6 +111,7 @@ def run():
                     "bus_lanes": cfg.bus_lanes,
                     "sam_model": cfg.sam_model,
                     "line_initial_row": cfg.line_initial_row,
+                    "line_access_cost": cfg.line_access_cost,
                     "line_move_per_row": cfg.line_move_per_row,
                     "d": cfg.d,
                     "max_parallel_ops": cfg.max_parallel_ops,
@@ -123,7 +130,7 @@ def run():
                     "gate_counts": json.dumps(circuit.stats(), sort_keys=True),
                     "python_version": platform.python_version(),
                     "policy_params": json.dumps(params, sort_keys=True),
-                    "comparison_group": f"{spec['tag']}:CR{cr_slots}:B{n_banks}",
+                    "comparison_group": f"{spec['tag']}:CR{cr_slots}:B{n_banks}:access{line_access_cost}",
                 })
                 rows.append(result)
                 print(f"  CR={cr_slots:2d} banks={n_banks} "
