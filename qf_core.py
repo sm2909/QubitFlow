@@ -431,6 +431,10 @@ def from_qasm(path: str, **kw) -> Circuit:
                 raise ValueError(f"malformed {gate} statement: {statement}")
             phase = "s" if gate == "sx" else "sdg"
             gates.extend([("h", operands), (phase, operands), ("h", operands)])
+        elif gate == "ccx":
+            if angle is not None or len(operands) != 3:
+                raise ValueError(f"malformed CCX statement: {statement}")
+            gates.extend(_toffoli(*operands))
         else:
             if angle is not None:
                 raise ValueError(f"unexpected parameters for {gate}: {statement}")
@@ -488,7 +492,7 @@ class Simulator:
         B = cfg.n_banks
         if cfg.cr_slots < 2:
             raise ValueError("cr_slots must be >= 2 (two-qubit ops need both operands resident)")
-        if -(-circuit.n_qubits // B) > cfg.bank_capacity:
+        if not initially_resident and -(-circuit.n_qubits // B) > cfg.bank_capacity:
             raise ValueError("banks too small to hold all logical qubits")
         self.circuit, self.cfg, self.policy = circuit, cfg, policy
         self.t = 0
@@ -676,7 +680,9 @@ class Simulator:
         while len(self.finished) < n:
             self._tick()
             while self.policy.step(self):
-                pass
+                # Complete zero-beat gates/transfers immediately before the policy
+                # attempts another action at the same timestamp.
+                self._complete()
             candidates = [end for end, _ in self.running] + [x["end"] for x in self.xfers]
             if self.ms_stock < self.cfg.timing.magic_buffer:
                 candidates.append(self.ms_next)
@@ -923,12 +929,20 @@ def validate_schedule(trace, circuit, cfg, initial_loc):
             if not isinstance(count, int) or not 0 < count <= cfg.timing.magic_factories:
                 errs.append("invalid magic-state production count")
                 continue
-            if event["time"] % cfg.timing.magic_interval != 0:
+                    if not isinstance(event.get("time"), (int, float)) or event["time"] <= 0:
+                errs.append("magic-state production has invalid timestamp")
+            elif event["time"] % cfg.timing.magic_interval != 0:
                 errs.append("magic-state production is off factory cadence")
             stock += count
             if stock > cfg.timing.magic_buffer:
                 errs.append("magic-state buffer overflow")
         else:
+            op_id = event.get("op_id")
+            op_event = seen.get(op_id)
+            if op_event is None or op_event.get("start") != event.get("time"):
+                errs.append("magic-state consumption does not coincide with a T-gate start")
+            elif circuit.ops[op_id].kind != "T":
+                errs.append("magic-state consumption references a non-T operation")
             stock -= 1
             if stock < 0:
                 errs.append("magic-state inventory became negative")
