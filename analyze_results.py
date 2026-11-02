@@ -26,6 +26,7 @@ def main(path="results.csv"):
             policy_samples[policy].append((speedup, delta,
                                            int(row["transfers"]) - int(baseline["transfers"])))
             workload_rows.append({
+                "experiment_axis": row.get("experiment_axis", "architecture_and_access_sensitivity"),
                 "comparison_group": group,
                 "workload_tag": row["workload_tag"],
                 "cr_slots": row["cr_slots"],
@@ -52,21 +53,30 @@ def main(path="results.csv"):
         writer.writerows(workload_rows)
 
     summary = []
-    for policy, samples in sorted(policy_samples.items()):
-        speeds = [x[0] for x in samples]
-        deltas = [x[1] for x in samples]
-        transfer_deltas = [x[2] for x in samples]
-        if policy == "lsqca-lazy":
-            continue
-        summary.append({
-            "policy": policy,
-            "groups": len(samples),
-            "median_speedup_vs_lru": f"{statistics.median(speeds):.6f}",
-            "mean_speedup_vs_lru": f"{statistics.mean(speeds):.6f}",
-            "fraction_groups_faster": f"{sum(x > 1 for x in speeds) / len(speeds):.6f}",
-            "median_cycle_delta": statistics.median(deltas),
-            "median_transfer_delta": statistics.median(transfer_deltas),
-        })
+    axis_samples = defaultdict(lambda: defaultdict(list))
+    for row in workload_rows:
+        axis_samples[row["experiment_axis"]][row["policy"]].append((
+            float(row["speedup_vs_lru"]),
+            int(row["cycle_delta_vs_lru"]),
+            int(row["transfer_delta_vs_lru"]),
+        ))
+    for axis, policies in sorted(axis_samples.items()):
+        for policy, samples in sorted(policies.items()):
+            if policy == "lsqca-lazy":
+                continue
+            speeds = [x[0] for x in samples]
+            deltas = [x[1] for x in samples]
+            transfer_deltas = [x[2] for x in samples]
+            summary.append({
+                "experiment_axis": axis,
+                "policy": policy,
+                "groups": len(samples),
+                "median_speedup_vs_lru": f"{statistics.median(speeds):.6f}",
+                "mean_speedup_vs_lru": f"{statistics.mean(speeds):.6f}",
+                "fraction_groups_faster": f"{sum(x > 1 for x in speeds) / len(speeds):.6f}",
+                "median_cycle_delta": statistics.median(deltas),
+                "median_transfer_delta": statistics.median(transfer_deltas),
+            })
 
     with open("policy_summary.csv", "w", newline="") as handle:
         fields = list(summary[0])
@@ -76,9 +86,9 @@ def main(path="results.csv"):
 
     print(f"Analyzed {len(groups)} workload/architecture groups.")
     print("Median speedup vs program-order LRU (speedup > 1 is better):")
-    for row in sorted(summary, key=lambda x: float(x["median_speedup_vs_lru"]), reverse=True):
+    for row in sorted(summary, key=lambda x: (x["experiment_axis"], -float(x["median_speedup_vs_lru"]))):
         print(
-            f"  {row['policy']:24s} median={float(row['median_speedup_vs_lru']):.3f}x "
+            f"  {row['experiment_axis']:34s} {row['policy']:24s} median={float(row['median_speedup_vs_lru']):.3f}x "
             f"mean={float(row['mean_speedup_vs_lru']):.3f}x "
             f"faster={float(row['fraction_groups_faster']):.1%} "
             f"groups={row['groups']}"
