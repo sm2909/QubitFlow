@@ -208,7 +208,8 @@ POLICIES = {
         lookahead, "belady", f"fixed-belady(W={lookahead})"
     ),
     "joint": lambda prefetch=True, prefetch_width=2, **kw: JointPolicy(
-        prefetch, prefetch_width
+        prefetch, prefetch_width,
+        f"joint-prefetch(W={prefetch_width})" if prefetch else "dag-no-prefetch",
     ),
     "dag_no_prefetch": lambda **kw: JointPolicy(False, 0, "dag-no-prefetch"),
 }
