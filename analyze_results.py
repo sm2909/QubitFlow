@@ -30,6 +30,7 @@ def main(path="results.csv"):
                 "workload_tag": row["workload_tag"],
                 "cr_slots": row["cr_slots"],
                 "n_banks": row["n_banks"],
+                "line_access_cost": row.get("line_access_cost", ""),
                 "policy": policy,
                 "baseline_cycles": base_cycles,
                 "cycles": cycles,
