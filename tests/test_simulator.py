@@ -1,3 +1,5 @@
+import cmath
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -31,6 +33,39 @@ def run_checked(circuit, policy="lsqca_lazy", cfg=None, initially_resident=False
     return sim, result
 
 
+
+def apply_basis_circuit(circuit, basis):
+    """Tiny exact statevector checker for Clifford+T basis-state regressions."""
+    state = [0j] * (1 << circuit.n_qubits)
+    state[basis] = 1 + 0j
+    scale = 1 / math.sqrt(2)
+    for op in circuit.ops:
+        if op.name == "h":
+            q = op.qubits[0]
+            mask = 1 << q
+            for i in range(len(state)):
+                if not (i & mask):
+                    a, b = state[i], state[i | mask]
+                    state[i] = (a + b) * scale
+                    state[i | mask] = (a - b) * scale
+        elif op.name in ("t", "tdg"):
+            q = op.qubits[0]
+            phase = cmath.exp((1j if op.name == "t" else -1j) * math.pi / 4)
+            for i in range(len(state)):
+                if i & (1 << q):
+                    state[i] *= phase
+        elif op.name == "cx":
+            control, target = op.qubits
+            cmask, tmask = 1 << control, 1 << target
+            for i in range(len(state)):
+                if (i & cmask) and not (i & tmask):
+                    j = i | tmask
+                    state[i], state[j] = state[j], state[i]
+        else:
+            raise AssertionError(f"statevector test does not support {op.name}")
+    return state
+
+
 def parse_qasm(source):
     with tempfile.NamedTemporaryFile("w", suffix=".qasm", delete=False) as handle:
         handle.write(source)
@@ -57,6 +92,30 @@ class ConfigAndCircuitTests(unittest.TestCase):
             core.Circuit.from_gates(1, [("h", (1,))])
         with self.assertRaises(ValueError):
             core.Circuit.from_gates(1, [("u3", (0,))])
+
+    def test_toffoli_decomposition_is_exact_on_all_basis_states(self):
+        circ = core.Circuit.from_gates(3, core._toffoli(0, 1, 2), "toffoli")
+        for basis in range(8):
+            state = apply_basis_circuit(circ, basis)
+            expected = basis ^ (1 << 2 if (basis & 0b11) == 0b11 else 0)
+            self.assertAlmostEqual(abs(state[expected]), 1.0, places=8)
+            self.assertTrue(all(abs(v) < 1e-8 for i, v in enumerate(state)
+                                if i != expected))
+
+    def test_two_bit_cuccaro_adder_on_all_classical_inputs(self):
+        circ = core.adder(2)
+        for a in range(4):
+            for b in range(4):
+                basis = (((a >> 0) & 1) << 1) | (((b >> 0) & 1) << 2) \
+                        | (((a >> 1) & 1) << 3) | (((b >> 1) & 1) << 4)
+                total = a + b
+                expected = (((a >> 0) & 1) << 1) | ((total & 1) << 2) \
+                           | (((a >> 1) & 1) << 3) | (((total >> 1) & 1) << 4) \
+                           | (((total >> 2) & 1) << 5)
+                state = apply_basis_circuit(circ, basis)
+                self.assertAlmostEqual(abs(state[expected]), 1.0, places=8)
+                self.assertTrue(all(abs(v) < 1e-8 for i, v in enumerate(state)
+                                    if i != expected))
 
     def test_random_seed_is_deterministic(self):
         self.assertEqual(
