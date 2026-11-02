@@ -179,6 +179,21 @@ class SimulatorTests(unittest.TestCase):
         sim, _ = run_checked(circ, "joint", cfg=cfg)
         self.assertGreater(sum(e["kind"] == "store" for e in sim.trace), 0)
 
+    def test_joint_does_not_thrash_between_incompatible_ready_ops(self):
+        circ = core.Circuit.from_gates(4, [
+            ("h", (0,)), ("h", (1,)), ("h", (2,)), ("h", (3,)),
+            ("cx", (0, 1)), ("cx", (2, 3)),
+        ])
+        cfg = core.ArchConfig(
+            cr_slots=2, n_banks=2, bank_capacity=4, bank_width=1,
+            line_initial_row=1,
+        )
+        sim, _ = run_checked(circ, "joint", cfg=cfg)
+        self.assertEqual(
+            {e["id"] for e in sim.trace if e["kind"] == "op"},
+            set(range(len(circ.ops))),
+        )
+
     def test_dag_dependencies_after_reordering(self):
         circ = core.Circuit.from_gates(2, [
             ("h", (0,)), ("x", (1,)), ("t", (0,)), ("cx", (0, 1))
