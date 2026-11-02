@@ -49,13 +49,19 @@ class Timing:
 
     def __post_init__(self):
         for key in ("t_h", "t_s", "t_pauli", "t_measure", "t_parity_measure",
-                    "t_t", "t_2q", "xfer_base", "xfer_per_depth"):
-            if getattr(self, key) < 0:
+                    "t_t", "t_2q", "xfer_base", "xfer_per_depth",
+                    "magic_interval", "magic_factories"):
+            value = getattr(self, key)
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ValueError(f"{key} must be an integer")
+            if key not in ("magic_interval", "magic_factories") and value < 0:
                 raise ValueError(f"{key} must be non-negative")
         if self.magic_interval <= 0 or self.magic_factories <= 0:
             raise ValueError("magic_interval and magic_factories must be positive")
         if self.magic_buffer is None:
             object.__setattr__(self, "magic_buffer", 2 * self.magic_factories)
+        if not isinstance(self.magic_buffer, int) or isinstance(self.magic_buffer, bool):
+            raise ValueError("magic_buffer must be an integer")
         if self.magic_buffer <= 0:
             raise ValueError("magic_buffer must be positive")
 
@@ -97,18 +103,19 @@ class ArchConfig:
     def __post_init__(self):
         for key in ("d", "cr_slots", "n_banks", "bank_capacity",
                     "bank_width", "max_parallel_ops"):
-            if getattr(self, key) <= 0:
-                raise ValueError(f"{key} must be positive")
+            value = getattr(self, key)
+            if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                raise ValueError(f"{key} must be a positive integer")
         if self.cr_slots < 2:
             raise ValueError("cr_slots must be >= 2")
         if self.bus_lanes is None:
             object.__setattr__(self, "bus_lanes", self.n_banks)
-        if self.bus_lanes <= 0:
-            raise ValueError("bus_lanes must be positive")
+        if not isinstance(self.bus_lanes, int) or isinstance(self.bus_lanes, bool) or self.bus_lanes <= 0:
+            raise ValueError("bus_lanes must be a positive integer")
         if self.sam_model not in ("line", "depth"):
             raise ValueError("sam_model must be 'line' or 'depth'")
-        if self.line_move_per_row < 0:
-            raise ValueError("line_move_per_row must be non-negative")
+        if not isinstance(self.line_move_per_row, int) or isinstance(self.line_move_per_row, bool) or self.line_move_per_row < 0:
+            raise ValueError("line_move_per_row must be a non-negative integer")
         rows = math.ceil(self.bank_capacity / self.bank_width)
         if self.line_initial_row is None:
             object.__setattr__(self, "line_initial_row", 0)
