@@ -93,6 +93,11 @@ class ConfigAndCircuitTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_qasm("""OPENQASM 2.0; qreg q[1]; rz(pi/8) q[0];""")
 
+    def test_qasm_rejects_operations_after_measurement(self):
+        with self.assertRaises(ValueError):
+            parse_qasm("""OPENQASM 2.0; qreg q[1]; creg c[1];
+                measure q[0] -> c[0]; x q[0];""")
+
     def test_qasm_expands_toffoli(self):
         circ = parse_qasm("""OPENQASM 2.0;
             include "qelib1.inc";
