@@ -2,8 +2,8 @@ import math
 import qf_core as core
 from qf_policies import make_policy
 
-# Small circuit: 6 logical qubits
-circ = core.adder(1000)
+# Small correctness workload: 2-bit adder has 6 logical qubits.
+circ = core.adder(2)
 
 cfg = core.ArchConfig(
     d=11,
@@ -19,21 +19,18 @@ policies = [
     ("lsqca_lazy", {}),
     ("fixed_prefetch", {"lookahead": 2}),
     ("fixed_belady", {"lookahead": 2}),
+    ("dag_no_prefetch", {}),
+    ("joint", {"prefetch_width": 2}),
 ]
 
 for name, params in policies:
     policy = make_policy(name, **params)
     sim = core.Simulator(circ, cfg, policy)
-
     result = sim.run()
-
-    errors = core.validate_schedule(
-        sim.trace, circ, cfg, sim.initial_loc
-    )
+    errors = core.validate_schedule(sim.trace, circ, cfg, sim.initial_loc)
 
     print(f"\nPolicy: {policy.name}")
     print(f"Result: {result.asdict()}")
     print(f"Trace events: {len(sim.trace)}")
     print(f"Validation errors: {errors}")
-
     assert not errors, errors
