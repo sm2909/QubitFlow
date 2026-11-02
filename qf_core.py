@@ -100,6 +100,8 @@ class ArchConfig:
     max_parallel_ops: int = 4
     timing: Timing = field(default_factory=Timing)
     sam_model: str = "line"
+    # Explicit local access/port overhead; zero is the movement-only lower bound.
+    line_access_cost: int = 0
     line_move_per_row: int = 1
     line_initial_row: int | None = None
 
@@ -117,6 +119,8 @@ class ArchConfig:
             raise ValueError("bus_lanes must be a positive integer")
         if self.sam_model not in ("line", "depth"):
             raise ValueError("sam_model must be 'line' or 'depth'")
+        if not isinstance(self.line_access_cost, int) or isinstance(self.line_access_cost, bool) or self.line_access_cost < 0:
+            raise ValueError("line_access_cost must be a non-negative integer")
         if not isinstance(self.line_move_per_row, int) or isinstance(self.line_move_per_row, bool) or self.line_move_per_row < 0:
             raise ValueError("line_move_per_row must be a non-negative integer")
         rows = math.ceil(self.bank_capacity / self.bank_width)
@@ -143,7 +147,7 @@ class ArchConfig:
             return self.timing.xfer_base + self.timing.xfer_per_depth * row
         if scan_row is None:
             scan_row = self.line_initial_row
-        return self.line_move_per_row * abs(row - scan_row)
+        return self.line_access_cost + self.line_move_per_row * abs(row - scan_row)
 
     def logical_cell_count(self) -> int:
         """SAM data cells + scan-line auxiliary cells + CR cells; excludes MSFs.
