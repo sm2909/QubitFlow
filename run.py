@@ -43,8 +43,8 @@ CIRCUITS = [
 ]
 
 ARCH_BASE = {
-    "d": 11, "cr_slots": 4, "n_banks": 2, "bank_capacity": 32,
-    "bank_width": 8, "bus_lanes": None, "max_parallel_ops": 4,
+    "d": 11, "cr_slots": 4, "n_banks": 2, "bank_capacity": 36,
+    "bank_width": 6, "bus_lanes": None, "max_parallel_ops": 4,
     "sam_model": "line", "line_access_cost": 0, "line_move_per_row": 1, "line_initial_row": 0,
 }
 ARCH_SWEEP = {"cr_slots": [2, 4, 8], "n_banks": [1, 2, 4],
