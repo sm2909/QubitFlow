@@ -270,11 +270,12 @@ def run():
             if result["cycles"] <= 0:
                 continue
             speedup = baseline["cycles"] / result["cycles"]
-            policy_speedups[policy].append(speedup)
-            workload_speedups[workload][policy].append(speedup)
-            if baseline.get("experiment_axis") == "architecture_and_access_sensitivity":
+            axis = baseline.get("experiment_axis", "architecture_and_access_sensitivity")
+            if axis == "architecture_and_access_sensitivity":
+                policy_speedups[policy].append(speedup)
+                workload_speedups[workload][policy].append(speedup)
                 access_speedups[int(baseline["line_access_cost"])][policy].append(speedup)
-            elif baseline.get("experiment_axis") == "two_qubit_timing_sensitivity":
+            elif axis == "two_qubit_timing_sensitivity":
                 t2q_speedups[int(baseline["t_2q"])][policy].append(speedup)
 
     def geo(values):
