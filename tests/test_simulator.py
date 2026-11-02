@@ -123,6 +123,13 @@ class ConfigAndCircuitTests(unittest.TestCase):
             core.random_circuit(8, 40, seed=123).ops,
         )
 
+    def test_joint_prefetch_widths_have_distinct_policy_names(self):
+        names = {
+            make_policy("joint", prefetch_width=w).name
+            for w in (1, 2, 4)
+        }
+        self.assertEqual(len(names), 3)
+
     def test_line_sam_row_distance(self):
         cfg = core.ArchConfig(
             cr_slots=2, n_banks=1, bank_capacity=16, bank_width=4,
