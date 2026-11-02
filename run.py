@@ -1,88 +1,115 @@
-"""run.py -- configure and run baseline experiments.  Usage:
-    python run.py                      # run EXPERIMENT below
-    python run.py --json cfg.json      # same schema, from a file
-    python run.py --no-validate        # skip the trace checker (faster sweeps)
-Edit EXPERIMENT; everything else is plumbing.
+"""Reproducible QubitFlow experiment harness.
+
+Run: python run.py [--json experiment.json] [--no-validate]
+The default matrix is intentionally modest. Increase workload sizes after smoke/tests pass.
 """
-import argparse, csv, itertools, json, math
+import argparse
+import csv
+import itertools
+import json
+import math
+import platform
+import random
 import qf_core as core
 from qf_policies import make_policy
 
 EXPERIMENT = {
-    # ---- workloads: kind in {adder, random, qasm, mqt}
     "circuits": [
-        {"kind": "adder", "n": 8},
-        {"kind": "random", "n": 40, "ops": 400, "seed": 0},
-        # {"kind": "qasm", "path": "my.qasm"},
+        {"kind": "adder", "n": 2, "tag": "correctness"},
+        {"kind": "adder", "n": 8, "tag": "ripple_adder"},
+        {"kind": "random", "n": 24, "ops": 180, "seed": 7, "tag": "mixed_locality"},
+        # Optional external workload:
+        # {"kind": "qasm", "path": "benchmarks/example.qasm"},
         # {"kind": "mqt", "name": "qft", "n": 12},
     ],
-    # ---- base architecture (any ArchConfig field). bank_capacity=None -> smallest that fits.
-    "arch": {"d": 11, "cr_slots": 8, "n_banks": 2, "bank_capacity": None, "bus_lanes": 1,
-             "bank_width": 8, "max_parallel_ops": 4},
-    # ---- timing overrides (any Timing field), e.g. {"xfer_per_depth": 2, "t_T": 3}
+    "arch": {"d": 11, "cr_slots": 4, "n_banks": 2, "bank_capacity": None,
+             "bus_lanes": 1, "bank_width": 8, "max_parallel_ops": 2,
+             "sam_model": "line"},
     "timing": {},
-    # ---- cartesian sweep over any arch/timing field; key prefix "timing." for Timing fields
-    "sweep": {"cr_slots": [4, 8, 12], "n_banks": [1, 2]},
-    # ---- (policy name, params) from qf_policies.POLICIES
-    "policies": [("lsqca_lazy", {}), ("fixed_prefetch", {"lookahead": 8}),
-                 ("fixed_belady", {"lookahead": 8})],
+    "sweep": {"cr_slots": [2, 4], "n_banks": [1, 2]},
+    "policies": [
+        ("lsqca_lazy", {}),
+        ("fixed_prefetch", {"lookahead": 2}),
+        ("fixed_prefetch", {"lookahead": 4}),
+        ("fixed_belady", {"lookahead": 2}),
+        ("fixed_belady", {"lookahead": 4}),
+        ("dag_no_prefetch", {}),
+        ("joint", {"prefetch_width": 2}),
+    ],
     "validate": True,
-    "csv": "results.csv",          # or None
+    "csv": "results.csv",
 }
 
 
-def build_circuit(c):
-    k = c["kind"]
-    if k == "adder":  return core.adder(c["n"])
-    if k == "random": return core.random_circuit(c["n"], c["ops"], seed=c.get("seed", 0))
-    if k == "qasm":   return core.from_qasm(c["path"])
-    if k == "mqt":    return core.from_mqt_bench(c["name"], c["n"])
-    raise ValueError(k)
+def build_circuit(spec):
+    kind = spec["kind"]
+    if kind == "adder":
+        return core.adder(spec["n"])
+    if kind == "random":
+        return core.random_circuit(spec["n"], spec["ops"], seed=spec.get("seed", 0))
+    if kind == "qasm":
+        return core.from_qasm(spec["path"])
+    if kind == "mqt":
+        return core.from_mqt_bench(spec["name"], spec["n"])
+    raise ValueError(f"unknown circuit kind: {kind}")
 
 
-def build_cfg(circ, arch, timing, point):
+def build_cfg(circuit, arch, timing, point):
     arch, timing = dict(arch), dict(timing)
-    for key, v in point.items():
-        (timing if key.startswith("timing.") else arch)[key.removeprefix("timing.")] = v
+    for key, value in point.items():
+        (timing if key.startswith("timing.") else arch)[key.removeprefix("timing.")] = value
     if arch.get("bank_capacity") is None:
-        arch["bank_capacity"] = math.ceil(circ.n_qubits / arch["n_banks"])
+        arch["bank_capacity"] = math.ceil(circuit.n_qubits / arch["n_banks"])
     return core.ArchConfig(**arch, timing=core.Timing(**timing))
 
 
 def sweep_points(sweep):
     keys = list(sweep)
-    return [dict(zip(keys, vals)) for vals in itertools.product(*(sweep[k] for k in keys))] or [{}]
+    return [dict(zip(keys, values))
+            for values in itertools.product(*(sweep[k] for k in keys))] or [{}]
 
 
-def run(exp, validate=True):
+def run(experiment, validate=True):
     rows = []
-    for cspec in exp["circuits"]:
-        circ = build_circuit(cspec)
-        print(f"\n== {circ.name}  {circ.stats()}")
-        for point in sweep_points(exp.get("sweep", {})):
-            cfg = build_cfg(circ, exp["arch"], exp.get("timing", {}), point)
-            for pname, params in exp["policies"]:
-                sim = core.Simulator(circ, cfg, make_policy(pname, **params))
-                res = sim.run().asdict()
+    for spec in experiment["circuits"]:
+        circuit = build_circuit(spec)
+        print(f"\n== {circuit.name}: {circuit.stats()}")
+        for point in sweep_points(experiment.get("sweep", {})):
+            cfg = build_cfg(circuit, experiment["arch"], experiment.get("timing", {}), point)
+            for policy_name, params in experiment["policies"]:
+                policy = make_policy(policy_name, **params)
+                sim = core.Simulator(circuit, cfg, policy)
+                result = sim.run().asdict()
                 if validate:
-                    errs = core.validate_schedule(sim.trace, circ, cfg, sim.initial_loc)
-                    assert not errs, f"INVALID schedule ({sim.policy.name}, {point}): {errs[:5]}"
-                res.update(point)
-                rows.append(res)
-                print(f"  {str(point):42s} {res['policy']:24s} cycles={res['cycles']:7d} "
-                      f"xfers={res['transfers']:6d} wait={res['mem_wait_cycles']:6d} "
-                      f"phys={res['physical_qubits']}")
-    if exp.get("csv") and rows:
-        cols = list(dict.fromkeys(k for r in rows for k in r))
-        with open(exp["csv"], "w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=cols); w.writeheader(); w.writerows(rows)
-        print(f"\nwrote {exp['csv']}")
+                    errors = core.validate_schedule(sim.trace, circuit, cfg, sim.initial_loc)
+                    if errors:
+                        raise AssertionError(
+                            f"invalid schedule ({policy.name}, {point}): {errors[:10]}"
+                        )
+                result.update(point)
+                result["workload_tag"] = spec.get("tag", spec["kind"])
+                result["seed"] = spec.get("seed", "")
+                result["sam_model"] = cfg.sam_model
+                result["prefetch_params"] = json.dumps(params, sort_keys=True)
+                rows.append(result)
+                print(f"  {str(point):30s} {result['policy']:22s} "
+                      f"cycles={result['cycles']:7d} transfers={result['transfers']:5d} "
+                      f"mem_wait={result['mem_wait_cycles']:6d} "
+                      f"msf_wait={result['msf_stall_cycles']:6d}")
+    if experiment.get("csv") and rows:
+        columns = list(dict.fromkeys(key for row in rows for key in row))
+        with open(experiment["csv"], "w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=columns)
+            writer.writeheader()
+            writer.writerows(rows)
+        print(f"\nWrote {experiment['csv']}")
     return rows
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--json"); ap.add_argument("--no-validate", action="store_true")
-    a = ap.parse_args()
-    exp = json.load(open(a.json)) if a.json else EXPERIMENT
-    run(exp, validate=exp.get("validate", True) and not a.no_validate)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--json")
+    parser.add_argument("--no-validate", action="store_true")
+    args = parser.parse_args()
+    experiment = json.load(open(args.json)) if args.json else EXPERIMENT
+    run(experiment, validate=experiment.get("validate", True) and not args.no_validate)
