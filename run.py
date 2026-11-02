@@ -9,6 +9,7 @@ import itertools
 import json
 import math
 import platform
+from collections import defaultdict
 import qf_core as core
 from qf_policies import make_policy
 
@@ -177,7 +178,68 @@ def run():
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         writer.writerows(rows)
-    print(f"\nWrote {len(rows)} validated rows to results.csv")
+
+    # Summarize only within identical workload/architecture groups. Never pool
+    # raw cycle counts across different circuits or hardware configurations.
+    grouped = defaultdict(dict)
+    for row in rows:
+        if row["policy"] != "all_qubits_in_CR_lower_bound":
+            grouped[row["comparison_group"]][row["policy"]] = row
+    policy_speedups = defaultdict(list)
+    workload_speedups = defaultdict(lambda: defaultdict(list))
+    for group, policies in grouped.items():
+        baseline = policies.get("lsqca-lazy")
+        if baseline is None or baseline["cycles"] <= 0:
+            continue
+        workload = baseline["workload_tag"]
+        for policy, result in policies.items():
+            if result["cycles"] <= 0:
+                continue
+            speedup = baseline["cycles"] / result["cycles"]
+            policy_speedups[policy].append(speedup)
+            workload_speedups[workload][policy].append(speedup)
+
+    def geo(values):
+        return math.exp(sum(math.log(x) for x in values) / len(values)) if values else float("nan")
+
+    lines = [
+        "# QubitFlow experiment summary",
+        "",
+        "All speedups are computed within the same workload and architecture configuration.",
+        "Speedup = lazy-LRU makespan / policy makespan; values above 1 are faster.",
+        "This is an abstract scheduling-model study, not a physical-hardware prediction.",
+        "",
+        "## Aggregate policy comparison",
+        "",
+        "| Policy | Geomean speedup vs lazy | Config wins / comparisons |",
+        "|---|---:|---:|",
+    ]
+    for policy in sorted(policy_speedups):
+        vals = policy_speedups[policy]
+        wins = sum(v > 1.0 for v in vals)
+        lines.append(f"| {policy} | {geo(vals):.4f}x | {wins}/{len(vals)} |")
+    lines += ["", "## Per-workload geomean speedup", "",
+              "| Workload | " + " | ".join(sorted(policy_speedups)) + " |",
+              "|---|" + "---:|" * len(policy_speedups)]
+    for workload in sorted(workload_speedups):
+        cells = [f"{geo(workload_speedups[workload].get(p, [])):.4f}x"
+                 if workload_speedups[workload].get(p) else "—"
+                 for p in sorted(policy_speedups)]
+        lines.append("| " + workload + " | " + " | ".join(cells) + " |")
+    lines += [
+        "",
+        "## Interpretation limits",
+        "",
+        "- The Line-SAM model captures row-distance only; it omits physical patch routing and port geometry.",
+        "- CNOT and T-macro durations are explicit assumptions; consult the CSV for every timing parameter.",
+        "- QFT-topology and random circuits are stress workloads, not functionally validated quantum applications.",
+        "- Belady is an offline fixed-order oracle, not an online implementation.",
+        "- All-qubits-in-CR rows are lower bounds and are excluded from speedup aggregates.",
+        "",
+    ]
+    with open("summary.md", "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines))
+    print(f"\nWrote {len(rows)} validated rows to results.csv and summary.md")
     return rows
 
 
