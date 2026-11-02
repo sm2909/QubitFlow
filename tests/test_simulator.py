@@ -75,6 +75,34 @@ class SimulatorTests(unittest.TestCase):
         ops = [e for e in sim.trace if e["kind"] == "op"]
         self.assertEqual({e["id"] for e in ops}, {0, 1})
 
+    def test_cross_bank_loads_overlap_with_two_bus_lanes(self):
+        circ = core.Circuit.from_gates(2, [("cx", (0, 1))])
+        sim, _ = run_checked(circ, policy="joint", n_banks=2,
+                             bank_capacity=2, bus_lanes=2)
+        loads = [e for e in sim.trace if e["kind"] == "load"]
+        self.assertEqual(len(loads), 2)
+        self.assertEqual(loads[0]["start"], loads[1]["start"])
+
+    def test_cr_capacity_forces_safe_eviction(self):
+        circ = core.Circuit.from_gates(3, [
+            ("h", (0,)), ("h", (1,)), ("h", (2,)), ("cx", (0, 2))
+        ])
+        sim, _ = run_checked(circ, policy="joint", cr_slots=2,
+                             n_banks=1, bank_capacity=3)
+        self.assertGreater(sum(e["kind"] == "store" for e in sim.trace), 0)
+
+    def test_dependencies_are_respected_after_reordering(self):
+        circ = core.Circuit.from_gates(2, [
+            ("h", (0,)), ("x", (1,)), ("t", (0,)), ("cx", (0, 1))
+        ])
+        sim, _ = run_checked(circ, policy="joint", n_banks=2,
+                             bank_capacity=2, bus_lanes=2)
+        starts = {e["id"]: e["start"] for e in sim.trace if e["kind"] == "op"}
+        ends = {e["id"]: e["end"] for e in sim.trace if e["kind"] == "op"}
+        self.assertGreaterEqual(starts[2], ends[0])
+        self.assertGreaterEqual(starts[3], ends[2])
+        self.assertGreaterEqual(starts[3], ends[1])
+
     def test_t_gate_magic_supply_accounting(self):
         circ = core.Circuit.from_gates(1, [("t", (0,)) for _ in range(7)])
         sim, _ = run_checked(circ, policy="joint",
