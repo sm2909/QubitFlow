@@ -362,6 +362,8 @@ class Simulator:
     # ------------------------------------------------------------ actions
     def try_exec(self, i):
         c, cfg = self.circuit, self.cfg
+        if not isinstance(i, int) or not 0 <= i < len(c.ops):
+            return False
         op = c.ops[i]
         if i in self.started or any(p not in self.finished for p in c.preds[i]):
             return False
@@ -403,10 +405,11 @@ class Simulator:
             if not free:
                 return False
             slot = free[0]
-        elif self.slot_owner[slot] is not None:
-            return False
-        if not isinstance(slot, int) or not 0 <= slot < self.cfg.cr_slots:
-            return False
+        else:
+            if not isinstance(slot, int) or not 0 <= slot < self.cfg.cr_slots:
+                return False
+            if self.slot_owner[slot] is not None:
+                return False
         end = self.t + self.cfg.xfer_time(cell, self.scan_row[b])
         self.slot_owner[slot] = q
         self.port_free[b] = self.lane_free[lane] = end
