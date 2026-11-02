@@ -28,9 +28,9 @@ A T gate consumes one buffered magic state. The aggregate factory model produces
 
 The default `sam_model="line"` models one scan-row position per bank. A transfer to a cell in row `r` takes:
 
-`line_move_per_row * abs(r - current_scan_row)`
+`line_access_cost + line_move_per_row * abs(r - current_scan_row)`
 
-The scan row is updated when a transfer completes. The default initial row is the boundary row 0. Transfers in different banks can overlap; the default transfer-lane count equals the bank count. Setting fewer lanes is an explicit shared-interconnect sensitivity.
+The scan row is updated when a transfer completes. The default initial row is the boundary row 0. `line_access_cost=0` is a movement-only lower bound; the experiment suite sweeps local overheads of 0, 1, and 2 beats because the port-exchange cost is not calibrated from the paper. Transfers in different banks can overlap; the default transfer-lane count equals the bank count. Setting fewer lanes is an explicit shared-interconnect sensitivity.
 
 This is a **row-distance abstraction**, not a full physical Line-SAM reproduction. It omits local patch transport, port geometry, code-deformation/lattice-surgery details, and any additional movement constraints not represented by the row model. The legacy `depth` model is a synthetic sensitivity option, not an LSQCA Point-SAM model. Point-SAM is not implemented.
 
