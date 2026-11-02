@@ -1,19 +1,22 @@
-"""qf_core.py -- engine for the QubitFlow baseline study (single file, no dependencies).
+"""QubitFlow discrete-event model for LSQCA-inspired scheduling experiments.
 
-Sections (in order):
-  1. CONFIG    ArchConfig, Timing         <- all architecture knobs live here
-  2. CIRCUIT   Circuit DAG + loaders      <- synthetic / Qiskit / QASM / MQT Bench
-  3. SIM       Simulator                  <- owns state, enforces every rule
-  4. VALIDATE  validate_schedule          <- independent trace checker
+Sections:
+  1. CONFIG    Architecture and logical timing parameters.
+  2. CIRCUIT   Dependency DAG, synthetic workloads, and strict QASM import.
+  3. SIM       Event-driven residency, transfer, operation, and MSF model.
+  4. VALIDATE  Independent trace/resource checker.
 
-!! All numeric defaults are PLACEHOLDERS, not values from the LSQCA paper. Calibrate first.
-Units: time = "beat" (~d code cycles, one lattice-surgery step); space = "tile" (2d^2-1 physical qubits).
+Time is measured in abstract code beats. H/S/Pauli/parity-measurement costs and
+the MSF 15-beat production interval follow LSQCA's reported assumptions.
+CNOT/T macro costs, bank geometry, CR size, parallelism, and scan-line initial
+position remain explicit model parameters. Line-SAM uses row-distance timing;
+this is not a physical surface-code or Point-SAM simulator. Space metrics are
+logical-cell accounting only, not physical-qubit estimates.
 
-Simulator rules: a qubit is in exactly one of ("CR",slot) | ("SAM",bank,cell) | ("XFER",).
-A transfer holds one bus lane + the bank's single port for its duration, reserves its
-destination at start, frees its source at completion. An op starts only if preds are
-finished, operands are resident+idle in CR, a parallel-op slot is free, and (T) a magic
-state is in stock.
+A qubit is in exactly one of ("CR", slot), ("SAM", bank, cell), or ("XFER",).
+Transfers reserve their destination and bank/lane resources at start; source
+resources are released at completion. Operations require completed dependencies,
+resident idle operands, a free operation slot, and a buffered magic state for T.
 """
 from __future__ import annotations
 import ast, bisect, math, random, re
@@ -87,7 +90,7 @@ class Timing:
 @dataclass(frozen=True)
 class ArchConfig:
     d: int = 11
-    cr_slots: int = 8
+    cr_slots: int = 2
     n_banks: int = 2
     bank_capacity: int = 64
     bank_width: int = 8
