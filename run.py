@@ -17,10 +17,11 @@ EXPERIMENT = {
     "circuits": [
         {"kind": "adder", "n": 2, "tag": "correctness"},
         {"kind": "adder", "n": 8, "tag": "ripple_adder"},
-        {"kind": "random", "n": 24, "ops": 180, "seed": 7, "tag": "mixed_locality"},
-        # Optional external workload:
+        {"kind": "qft", "n": 12, "tag": "qft_topology"},
+        {"kind": "random", "n": 24, "ops": 180, "seed": 7, "tag": "high_parallelism"},
+        # Optional full arithmetic benchmark via MQT Bench:
+        # {"kind": "mqt", "name": "multiplier", "n": 8, "tag": "multiplier"},
         # {"kind": "qasm", "path": "benchmarks/example.qasm"},
-        # {"kind": "mqt", "name": "qft", "n": 12},
     ],
     "arch": {"d": 11, "cr_slots": 4, "n_banks": 2, "bank_capacity": None,
              "bus_lanes": 1, "bank_width": 8, "max_parallel_ops": 2,
@@ -29,10 +30,14 @@ EXPERIMENT = {
     "sweep": {"cr_slots": [2, 4], "n_banks": [1, 2]},
     "policies": [
         ("lsqca_lazy", {}),
+        ("fixed_prefetch", {"lookahead": 1}),
         ("fixed_prefetch", {"lookahead": 2}),
         ("fixed_prefetch", {"lookahead": 4}),
+        ("fixed_prefetch", {"lookahead": 8}),
+        ("fixed_belady", {"lookahead": 1}),
         ("fixed_belady", {"lookahead": 2}),
         ("fixed_belady", {"lookahead": 4}),
+        ("fixed_belady", {"lookahead": 8}),
         ("dag_no_prefetch", {}),
         ("joint", {"prefetch_width": 2}),
     ],
@@ -45,6 +50,8 @@ def build_circuit(spec):
     kind = spec["kind"]
     if kind == "adder":
         return core.adder(spec["n"])
+    if kind == "qft":
+        return core.qft(spec["n"])
     if kind == "random":
         return core.random_circuit(spec["n"], spec["ops"], seed=spec.get("seed", 0))
     if kind == "qasm":
