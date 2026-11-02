@@ -372,14 +372,14 @@ def from_qasm(path: str, **kw) -> Circuit:
         raise TypeError(f"unsupported from_qasm options: {', '.join(kw)}")
     with open(path, encoding="utf-8") as handle:
         source = handle.read()
-    source = re.sub(r"//[^\\n]*", "", source)
+    source = re.sub(r"//[^\n]*", "", source)
     qregs, cregs, gates = {}, {}, []
     statements = [x.strip() for x in source.split(";") if x.strip()]
     qtotal = 0
     for statement in statements:
         if statement.startswith("OPENQASM ") or statement.startswith("include "):
             continue
-        decl = re.fullmatch(r"qreg\\s+(\\w+)\\s*\\[\\s*(\\d+)\\s*\\]", statement)
+        decl = re.fullmatch(r"qreg\s+(\w+)\s*\[\s*(\d+)\s*\]", statement)
         if decl:
             name, size = decl.group(1), int(decl.group(2))
             if name in qregs or size <= 0:
@@ -387,14 +387,14 @@ def from_qasm(path: str, **kw) -> Circuit:
             qregs[name] = (qtotal, size)
             qtotal += size
             continue
-        decl = re.fullmatch(r"creg\\s+(\\w+)\\s*\\[\\s*(\\d+)\\s*\\]", statement)
+        decl = re.fullmatch(r"creg\s+(\w+)\s*\[\s*(\d+)\s*\]", statement)
         if decl:
             cregs[decl.group(1)] = int(decl.group(2))
             continue
         if statement.startswith("barrier"):
             continue
         if statement.startswith("measure "):
-            m = re.fullmatch(r"measure\\s+(\\w+)\\[(\\d+)\\]\\s*->\\s*(\\w+)\\[(\\d+)\\]", statement)
+            m = re.fullmatch(r"measure\s+(\w+)\[(\d+)\]\s*->\s*(\w+)\[(\d+)\]", statement)
             if not m:
                 raise ValueError(f"unsupported measurement statement: {statement}")
             reg, idx, creg, cidx = m.groups()
@@ -405,14 +405,14 @@ def from_qasm(path: str, **kw) -> Circuit:
                 raise ValueError(f"measurement index out of range: {statement}")
             gates.append(("measure", (base + int(idx),)))
             continue
-        m = re.fullmatch(r"([a-zA-Z][a-zA-Z0-9_]*)\\s*(?:\\(([^()]*)\\))?\\s+(.+)", statement)
+        m = re.fullmatch(r"([a-zA-Z][a-zA-Z0-9_]*)\s*(?:\(([^()]*)\))?\s+(.+)", statement)
         if not m:
             raise ValueError(f"unsupported OpenQASM statement: {statement}")
         gate, angle, operand_text = m.groups()
         gate = gate.lower()
         operands = []
         for operand in operand_text.split(","):
-            q = re.fullmatch(r"\\s*(\\w+)\\[(\\d+)\\]\\s*", operand)
+            q = re.fullmatch(r"\s*(\w+)\[(\d+)\]\s*", operand)
             if not q:
                 raise ValueError(f"unsupported QASM operand: {operand}")
             reg, idx = q.groups()
