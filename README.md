@@ -22,9 +22,10 @@ Python 3.10+; the simulator, OpenQASM subset importer, tests, and experiment har
 python -m unittest discover -s tests -v
 python smoke.py
 python run.py
+python analyze_results.py
 ```
 
-The experiment suite writes `results.csv`. GitHub Actions runs the same tests, smoke test, and controlled experiment suite and uploads the CSV artifact.
+The experiment suite writes `results.csv`. `analyze_results.py` produces per-workload and aggregate comparisons against program-order LRU. GitHub Actions runs tests, smoke, experiments, and analysis, then uploads all three CSV artifacts.
 
 ## Circuit import
 
