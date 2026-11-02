@@ -55,7 +55,7 @@ The synthetic QFT workload captures a dense controlled-interaction topology only
 - The joint policy selects among DAG-ready operations using weighted critical-path priority, demand-loads their operands, and evicts based on a DAG-aware estimate of the longest remaining dependency path to the next use.
 - Prefetch is conservative: it is disabled while ready operations still need demand operands and never evicts a resident qubit to prefetch.
 
-The joint policy remains a deterministic heuristic. Its DAG-aware next-use estimate is not an optimal register-allocation algorithm.
+The joint policy is evaluated at prefetch widths W=1/2/4. It remains a deterministic heuristic. Its DAG-aware next-use estimate is not an optimal register-allocation algorithm.
 
 ## Metrics
 
