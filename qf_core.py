@@ -197,6 +197,27 @@ def adder(n_bits: int) -> Circuit:
     return Circuit.from_gates(2 * n_bits + 2, g, f"adder{n_bits}")
 
 
+
+def qft(n_qubits: int) -> Circuit:
+    """Return a QFT interaction-topology workload.
+
+    Controlled-phase angles and final bit-reversal swaps are represented as
+    generic two-qubit operations: this is for scheduling/topology studies,
+    not a gate-equivalent decomposition or statevector implementation.
+    """
+    if not isinstance(n_qubits, int) or n_qubits < 1:
+        raise ValueError("n_qubits must be a positive integer")
+    gates = []
+    for target in range(n_qubits):
+        gates.append(("h", (target,)))
+        for control in range(target + 1, n_qubits):
+            gates.append(("cp", (control, target)))
+    for left in range(n_qubits // 2):
+        right = n_qubits - 1 - left
+        gates.append(("swap", (left, right)))
+    return Circuit.from_gates(n_qubits, gates, f"qft{n_qubits}")
+
+
 def random_circuit(n_qubits: int, n_ops: int, p_t=0.3, p_2q=0.4, seed=0) -> Circuit:
     if n_qubits < 1 or n_ops < 0:
         raise ValueError("n_qubits must be positive and n_ops non-negative")
