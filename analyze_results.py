@@ -23,7 +23,6 @@ def main(path="results.csv"):
             speedup = base_cycles / cycles if cycles else 1.0
             delta = cycles - base_cycles
             workload_rows.append({
-                "experiment_axis": row.get("experiment_axis", "architecture_and_access_sensitivity"),
                 "comparison_group": group,
                 "workload_tag": row["workload_tag"],
                 "cr_slots": row["cr_slots"],
