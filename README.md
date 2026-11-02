@@ -58,6 +58,7 @@ Belady is an offline oracle for fixed-order issue, not a deployable online polic
 - SAM banks: 1, 2, 4.
 - SAM capacity per bank: 36 cells, arranged as a 6×6 Line-SAM bank.
 - Local Line-SAM access overhead: 0, 1, 2 beats (0 is movement-only lower bound).
+- Separate CNOT-duration sensitivity: 1, 2, 4 beats at CR=4, banks=2, access overhead=1.
 - One transfer lane per bank by default.
 
 Within each workload/configuration group, policy comparisons hold hardware parameters fixed. Changing bank count is an architecture sensitivity experiment and changes total SAM capacity. Results include workload provenance, full architecture parameters, policy parameters, Python version, makespan, transfer counts, non-compute cycles, MSF-blocked cycles, logical-cell count, and logical memory-cell fraction.
