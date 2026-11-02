@@ -91,6 +91,17 @@ class ConfigAndCircuitTests(unittest.TestCase):
         self.assertGreater(len(circ.ops), 250)
         self.assertGreater(sum(op.kind == "T" for op in circ.ops), 0)
 
+    def test_qasmbench_workload_executes_and_validates(self):
+        import os
+        path = os.path.join(os.path.dirname(__file__), "..", "benchmarks", "adder_n10.qasm")
+        circ = core.from_qasm(path)
+        cfg = core.ArchConfig(cr_slots=4, n_banks=2, bank_capacity=8,
+                              bank_width=2, max_parallel_ops=4)
+        sim = core.Simulator(circ, cfg, make_policy("joint"))
+        result = sim.run()
+        self.assertGreater(result.cycles, 0)
+        self.assertEqual(core.validate_schedule(sim.trace, circ, cfg, sim.initial_loc), [])
+
 
 
 class SimulatorTests(unittest.TestCase):
