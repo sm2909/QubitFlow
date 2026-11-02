@@ -1,62 +1,93 @@
 # QubitFlow
 
-QubitFlow is a small, dependency-light discrete-event simulator for exploring scheduling in load/store fault-tolerant quantum-computing architectures.
+QubitFlow is a discrete-event simulator for studying operation scheduling,
+logical-qubit residency, and load/store contention in a simplified LSQCA-style
+fault-tolerant quantum architecture.
 
-The current prototype models:
-- A limited-capacity computation region (CR) and banked storage area (SAM).
-- Logical-qubit load/store transfers with per-bank ports and shared bus lanes.
-- Dependency-constrained gate execution and bounded parallelism.
-- A finite magic-state buffer and periodic factory production.
-- Fixed-order memory-management baselines and a DAG-aware joint scheduling heuristic.
-- An independent trace validator and CSV experiment harness.
+## What is modeled
 
-**Research boundary:** this is an architectural scheduling abstraction, not a physical surface-code simulator and not a faithful reproduction of LSQCA. Timing and area defaults are placeholders. In particular, the current Line-SAM model is a configurable scan-row abstraction whose parameters still require calibration against the paper.
+- A small computation region (CR) and banked scan-line storage area (SAM).
+- One SAM access port per bank; independent banks can transfer concurrently.
+- Configurable shared transfer lanes; default is one lane per bank.
+- Dependency-constrained gate issue and bounded operation parallelism.
+- Finite magic-state buffering with configurable factory count and cadence.
+- Program-order demand/prefetch baselines and a DAG-ready heuristic scheduler.
+- Independent trace validation, bundled QASMBench circuits, and CSV experiments.
+
+**Scope:** QubitFlow is an architectural scheduling model, not a surface-code
+simulator and not a complete reproduction of LSQCA. The default Line-SAM
+latency is the row-distance abstraction (H) (one beat per row by default).
+It omits physical patch transport, routing congestion, syndrome extraction,
+decoding, and factory layout. The optimized CNOT duration remains an explicit
+model parameter because its implementation latency depends on the compiled
+logical operation. Do not interpret model outputs as hardware predictions.
 
 ## Quick start
 
-Python 3.10+.
+Python 3.10+; the core simulator, tests, and QASM importer use only the standard
+library.
 
 ```bash
-python smoke.py
 python -m unittest discover -s tests -v
+python smoke.py
 python run.py
 ```
 
-No third-party packages are needed for the core simulator or tests. Qiskit/QASM and MQT Bench loaders require their optional dependencies and are not exercised by the core test suite.
+The strict OpenQASM 2 importer supports the bundled QASMBench Clifford+T
+inputs. It rejects off-grid rotations and unsupported statements rather than
+silently assigning them an approximate cost.
 
-## Policies
+## Scheduling policies
 
 | Policy | Behavior |
 |---|---|
-| `lsqca_lazy` | Program-order issue, demand loads, LRU eviction |
-| `fixed_prefetch(W)` | Program-order issue, bounded lookahead prefetch, LRU |
-| `fixed_belady(W)` | Program-order issue, bounded lookahead prefetch, farthest-next-use eviction |
-| `dag_no_prefetch` | DAG-ready operation selection, demand loads, no speculative prefetch |
-| `joint` | DAG-ready operation selection, residency management, conservative prefetch |
+| `lsqca_lazy` | Program-order issue; demand loads; LRU eviction |
+| `fixed_prefetch(W)` | Program-order issue; bounded lookahead; LRU eviction |
+| `fixed_belady(W)` | Program-order issue; bounded lookahead; offline farthest-next-use baseline |
+| `dag_no_prefetch` | DAG-ready issue; demand loads; no speculative prefetch |
+| `joint` | DAG-ready issue, CR residency management, demand loads, optional prefetch |
 
-The Belady policy is an offline oracle-like baseline under its fixed-order assumptions, not a practical online policy. The joint policy is a deterministic heuristic, not an optimizer.
+Belady is an offline comparison, not an implementable online policy. The joint
+scheduler is a heuristic, not an optimizer or a claim of optimal scheduling.
+Its next-use estimate is based on each qubit's remaining operation sequence;
+critical-path priority currently uses unit operation weights.
 
 ## Experiments
 
-Edit `EXPERIMENT` in `run.py` or pass a JSON experiment file:
+`run.py` evaluates bundled QASMBench adder10, bigadder18, and multiplier15
+circuits. It sweeps CR capacity and SAM bank count, and compares all policies
+under identical hardware settings within each configuration.
 
 ```bash
-python run.py --json experiment.json
+python run.py
 ```
 
-The harness records cycles, transfers, transfer time, execution busy time, memory wait, MSF stall estimate, architecture parameters, policy parameters, and workload metadata in CSV.
+The generated `results.csv` contains raw makespan, loads/stores, transfer
+cycles, operation busy cycles, non-execution cycles, MSF-blocked estimate,
+logical-cell accounting, density ratio, circuit statistics, and full
+architecture/policy parameters. The sweep changes architecture capacity, so
+interpret it as an architecture-sensitivity study, not as a pure policy
+comparison across rows.
 
-For policy comparisons, hold the architecture constant. The default sweep varies CR capacity and bank count; because this also changes hardware resources, report it as an architecture sensitivity study rather than a pure policy comparison.
+## Metrics and limitations
 
-## Project layout
+- `cycles`: simulated makespan in abstract code beats.
+- `exec_busy_cycles`: union of gate-execution intervals.
+- `non_exec_cycles`: makespan minus execution-busy union; includes memory,
+  dependency, resource, and magic-state waits.
+- `msf_stall_cycles`: estimated interval where a ready T gate has resident,
+  idle operands, a free operation slot, and no magic state.
+- `logical_cells` and `memory_density`: explicit architectural cell
+  accounting, not physical-qubit estimates.
+- `total_transfer_cycles`: sum of transfer durations; overlapping transfers
+  count separately.
 
-- `qf_core.py`: architecture config, circuit DAG, simulator, trace validator.
-- `qf_policies.py`: baseline and joint scheduling policies.
-- `run.py`: reproducible experiment harness.
-- `smoke.py`: small end-to-end validation run.
-- `tests/`: correctness and regression tests.
-- `docs/DESIGN.md`: model assumptions, limitations, and calibration checklist.
+All benchmark results are conditional on the abstract timing model. The
+repository intentionally does not report physical-qubit counts or claim
+paper-level physical calibration.
 
-## Citation / architectural background
+## Benchmark provenance
 
-The architecture is motivated by LSQCA (Kobori et al., HPCA 2025) and virtualized logical qubits (Duckering et al., MICRO 2020). Consult the original papers before attributing exact physical timings, layout behavior, or implementation details to this prototype.
+Bundled QASMBench inputs and their license/notice are in `benchmarks/`.
+See `docs/DESIGN.md` for model assumptions, equations, and the remaining
+validation boundary.
