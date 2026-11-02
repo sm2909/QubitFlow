@@ -714,16 +714,35 @@ class Simulator:
                 )
             self._tick()
             policy_iterations = 0
+            seen_policy_states = set()
             while self.policy.step(self):
                 policy_iterations += 1
-                if policy_iterations > max(100, 8 * (n + self.circuit.n_qubits + 1)):
+                # Complete zero-beat gates/transfers before asking the policy again.
+                self._complete()
+                # Detect genuine same-timestamp residency/transfer cycles rather
+                # than relying on an arbitrary low action-count threshold.
+                signature = (
+                    tuple(sorted(self.loc.items())),
+                    tuple(self.slot_owner),
+                    tuple(tuple(bank) for bank in self.cells),
+                    tuple(sorted(self.running)),
+                    tuple(sorted((x["kind"], x["q"], x["bank"], x["cell"],
+                                  x["slot"], x["end"]) for x in self.xfers)),
+                    frozenset(self.started), frozenset(self.finished),
+                    tuple(self.port_free), tuple(self.lane_free), tuple(self.scan_row),
+                    self.ms_stock, self.ms_next,
+                )
+                if signature in seen_policy_states:
                     raise DeadlockError(
-                        f"policy made too many consecutive actions at t={self.t}; "
+                        f"policy entered a same-timestamp scheduling cycle at t={self.t}; "
                         f"policy={self.policy.name}"
                     )
-                # Complete zero-beat gates/transfers immediately before the policy
-                # attempts another action at the same timestamp.
-                self._complete()
+                seen_policy_states.add(signature)
+                if policy_iterations > max(10000, 32 * (n + self.circuit.n_qubits + 1)):
+                    raise DeadlockError(
+                        f"policy exceeded the action safety limit at t={self.t}; "
+                        f"policy={self.policy.name}"
+                    )
             if len(self.finished) == n:
                 break
             candidates = [end for end, _ in self.running] + [x["end"] for x in self.xfers]
