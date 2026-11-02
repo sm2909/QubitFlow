@@ -47,13 +47,14 @@ class FixedOrderPolicy:
                 reserve = 0 if demand else missing_head
                 if sim.free_slots() > reserve:
                     progress |= sim.try_load(q)
-                elif demand or self.eviction == "belady":
+                elif demand:
+                    # Evict only to satisfy the current head operation. Prefetch
+                    # is opportunistic and must never evict; otherwise Belady
+                    # lookahead can oscillate between future operands.
                     pending = sim.pending_stores()
-                    if sim.free_slots() + pending >= missing_head + (0 if demand else 1):
+                    if sim.free_slots() + pending >= missing_head:
                         continue
-                    victim = self._victim(
-                        sim, protected, None if demand else sim.next_use(q)
-                    )
+                    victim = self._victim(sim, protected)
                     if victim is not None:
                         progress |= sim.try_store(victim)
         return progress
