@@ -30,41 +30,71 @@ INF = float("inf")
 
 @dataclass(frozen=True)
 class Timing:
-    t_1q: int = 1            # Clifford 1-qubit gate in CR (H, S, X, Z ...)
-    t_2q: int = 2            # CX / CZ via lattice surgery inside CR
-    t_T: int = 2             # T via magic-state injection + correction
+    t_1q: int = 1
+    t_2q: int = 2
+    t_T: int = 2
     t_meas: int = 1
-    xfer_base: int = 2       # fixed cost of one CR<->SAM transfer
-    xfer_per_depth: int = 1  # extra cost per row of distance from the bank port
-    magic_interval: int = 4  # factory emits one magic state every N beats
-    magic_buffer: int = 4    # max magic states stored (also the initial stock)
+    xfer_base: int = 2
+    xfer_per_depth: int = 1
+    magic_interval: int = 4
+    magic_buffer: int = 4
+
+    def __post_init__(self):
+        for key in ("t_1q", "t_2q", "t_T", "t_meas", "xfer_base", "magic_interval", "magic_buffer"):
+            if getattr(self, key) <= 0:
+                raise ValueError(f"{key} must be positive")
+        if self.xfer_per_depth < 0:
+            raise ValueError("xfer_per_depth must be non-negative")
 
     def op_duration(self, kind: str) -> int:
-        return {"1q": self.t_1q, "2q": self.t_2q, "T": self.t_T, "meas": self.t_meas}[kind]
+        try:
+            return {"1q": self.t_1q, "2q": self.t_2q, "T": self.t_T, "meas": self.t_meas}[kind]
+        except KeyError as exc:
+            raise ValueError(f"unsupported operation kind: {kind}") from exc
 
 
 @dataclass(frozen=True)
 class ArchConfig:
-    d: int = 11                    # code distance (fixed in all experiments)
-    cr_slots: int = 8              # computational-register capacity (logical qubits)
-    n_banks: int = 2               # number of SAM banks, each with ONE access port
-    bank_capacity: int = 64        # cells per bank (logical qubits)
-    bank_width: int = 8            # cells per row; depth(cell) = cell // bank_width
-    bus_lanes: int = 1             # simultaneous CR<->SAM transfers (shared routes)
-    max_parallel_ops: int = 4      # concurrent lattice-surgery ops in CR (ancilla limit)
+    d: int = 11
+    cr_slots: int = 8
+    n_banks: int = 2
+    bank_capacity: int = 64
+    bank_width: int = 8
+    bus_lanes: int = 1
+    max_parallel_ops: int = 4
     timing: Timing = field(default_factory=Timing)
+    cr_ancilla_ratio: float = 1.0
+    sam_overhead: float = 0.10
+    bus_tiles_per_lane: int = 8
+    factory_tiles: int = 40
+    # Configurable scan-line abstraction; see docs/DESIGN.md.
+    sam_model: str = "line"
+    line_access_cost: int = 2
+    line_move_per_row: int = 1
+    line_initial_row: int = 0
 
-    # --- area model (tiles). Charge EVERYTHING that holds or moves qubits. ---
-    cr_ancilla_ratio: float = 1.0  # routing/ancilla tiles per CR slot
-    sam_overhead: float = 0.10     # port/scan/vacancy overhead per bank cell
-    bus_tiles_per_lane: int = 8    # route + temporary buffer tiles per bus lane
-    factory_tiles: int = 40        # magic-state factory footprint
+    def __post_init__(self):
+        for key in ("d", "cr_slots", "n_banks", "bank_capacity", "bank_width", "bus_lanes", "max_parallel_ops"):
+            if getattr(self, key) <= 0:
+                raise ValueError(f"{key} must be positive")
+        if self.cr_slots < 2:
+            raise ValueError("cr_slots must be >= 2")
+        if self.sam_model not in ("line", "depth"):
+            raise ValueError("sam_model must be 'line' or 'depth'")
+        if self.line_access_cost <= 0 or self.line_move_per_row < 0:
+            raise ValueError("line access cost must be positive and row movement non-negative")
+        if not 0 <= self.line_initial_row < math.ceil(self.bank_capacity / self.bank_width):
+            raise ValueError("line_initial_row is outside the SAM bank")
+        for key in ("cr_ancilla_ratio", "sam_overhead"):
+            if getattr(self, key) < 0:
+                raise ValueError(f"{key} must be non-negative")
+        if self.bus_tiles_per_lane < 0 or self.factory_tiles < 0:
+            raise ValueError("area overheads must be non-negative")
 
     def tiles(self) -> float:
         cr = self.cr_slots * (1 + self.cr_ancilla_ratio)
         sam = self.n_banks * self.bank_capacity * (1 + self.sam_overhead)
-        bus = self.bus_lanes * self.bus_tiles_per_lane
-        return cr + sam + bus + self.factory_tiles
+        return cr + sam + self.bus_lanes * self.bus_tiles_per_lane + self.factory_tiles
 
     def physical_qubits(self) -> int:
         return round(self.tiles() * (2 * self.d ** 2 - 1))
@@ -72,8 +102,17 @@ class ArchConfig:
     def depth(self, cell: int) -> int:
         return cell // self.bank_width
 
-    def xfer_time(self, cell: int) -> int:
-        return self.timing.xfer_base + self.timing.xfer_per_depth * self.depth(cell)
+    def xfer_time(self, cell: int, scan_row: int | None = None) -> int:
+        """Parameterized transfer model, not a calibrated reproduction of LSQCA."""
+        if not 0 <= cell < self.bank_capacity:
+            raise ValueError(f"SAM cell out of range: {cell}")
+        row = self.depth(cell)
+        if self.sam_model == "depth":
+            return self.timing.xfer_base + self.timing.xfer_per_depth * row
+        if scan_row is None:
+            scan_row = self.line_initial_row
+        return self.line_access_cost + self.line_move_per_row * abs(row - scan_row)
+
 
 # ============================================================================
 # 2. CIRCUIT
@@ -94,11 +133,23 @@ class Op:
 
 class Circuit:
     def __init__(self, n_qubits: int, ops: list, name: str = "circuit"):
-        self.n_qubits, self.ops, self.name = n_qubits, ops, name
-        last = {}
-        self.preds = []
+        if not isinstance(n_qubits, int) or n_qubits < 0:
+            raise ValueError("n_qubits must be a non-negative integer")
+        self.n_qubits, self.ops, self.name = n_qubits, list(ops), name
+        last, self.preds = {}, []
         self.uses = {q: [] for q in range(n_qubits)}
-        for op in ops:
+        for i, op in enumerate(self.ops):
+            if not isinstance(op, Op):
+                raise TypeError(f"ops[{i}] must be an Op")
+            if op.id != i:
+                raise ValueError("operation IDs must be contiguous and match list positions")
+            if op.kind not in {"1q", "2q", "T", "meas"}:
+                raise ValueError(f"unsupported operation kind at op {i}: {op.kind}")
+            arity = 2 if op.kind == "2q" else 1
+            if len(op.qubits) != arity or len(set(op.qubits)) != arity:
+                raise ValueError(f"op {i} must have {arity} distinct operand(s)")
+            if any(not isinstance(q, int) or q < 0 or q >= n_qubits for q in op.qubits):
+                raise ValueError(f"op {i} contains an out-of-range qubit index")
             self.preds.append(sorted({last[q] for q in op.qubits if q in last}))
             for q in op.qubits:
                 last[q] = op.id
@@ -106,16 +157,22 @@ class Circuit:
 
     @classmethod
     def from_gates(cls, n_qubits, gates, name="circuit"):
-        """gates: iterable of (gate_name, (q0, q1, ...))."""
-        ops = [Op(i, _KIND.get(g, "1q"), tuple(qs), g) for i, (g, qs) in enumerate(gates)]
-        assert all(1 <= len(o.qubits) <= 2 for o in ops), "decompose 3+ qubit gates first"
+        ops = []
+        for i, (gate, qubits) in enumerate(gates):
+            gate, qubits = gate.lower(), tuple(qubits)
+            if len(qubits) not in (1, 2):
+                raise ValueError(f"gate {gate!r} has unsupported arity {len(qubits)}")
+            kind = _KIND.get(gate, "1q")
+            if kind != "2q" and len(qubits) != 1:
+                raise ValueError(f"one-qubit gate {gate!r} needs one operand")
+            ops.append(Op(i, kind, qubits, gate))
         return cls(n_qubits, ops, name)
 
     def stats(self):
-        k = {}
-        for o in self.ops:
-            k[o.kind] = k.get(o.kind, 0) + 1
-        return {"qubits": self.n_qubits, "ops": len(self.ops), **k}
+        counts = {}
+        for op in self.ops:
+            counts[op.kind] = counts.get(op.kind, 0) + 1
+        return {"qubits": self.n_qubits, "ops": len(self.ops), **counts}
 
 
 # ---------------------------------------------------------------- synthetic benchmarks
@@ -141,6 +198,12 @@ def adder(n_bits: int) -> Circuit:
 
 
 def random_circuit(n_qubits: int, n_ops: int, p_t=0.3, p_2q=0.4, seed=0) -> Circuit:
+    if n_qubits < 1 or n_ops < 0:
+        raise ValueError("n_qubits must be positive and n_ops non-negative")
+    if not 0 <= p_t <= 1 or not 0 <= p_2q <= 1 or p_t + p_2q > 1:
+        raise ValueError("p_t and p_2q must be in [0, 1] and sum to at most 1")
+    if n_qubits < 2 and p_2q > 0:
+        raise ValueError("two-qubit gate probability requires at least two qubits")
     r = random.Random(seed)
     g = []
     for _ in range(n_ops):
@@ -155,28 +218,43 @@ def random_circuit(n_qubits: int, n_ops: int, p_t=0.3, p_2q=0.4, seed=0) -> Circ
 
 
 # ---------------------------------------------------------------- Qiskit / MQT Bench
-def from_qiskit(qc, rz_t_count: int = 4, name=None) -> Circuit:
-    """Transpile to {cx,h,s,sdg,t,tdg,x,z,rz} (unrolls ccx etc.), then build the DAG.
-    Arbitrary rz angles are charged as `rz_t_count` T gates (crude synthesis cost)."""
+def from_qiskit(qc, rz_t_count: int | None = None, name=None) -> Circuit:
+    """Map exact pi/4-grid RZ rotations to Clifford+T up to global phase.
+
+    Off-grid rotations raise by default. Supplying rz_t_count explicitly opts
+    into a coarse T-count cost approximation, not an equivalent synthesis.
+    """
     from qiskit import transpile
+    if rz_t_count is not None and rz_t_count < 0:
+        raise ValueError("rz_t_count must be non-negative")
     basis = ["cx", "h", "s", "sdg", "t", "tdg", "x", "z", "rz", "measure"]
     qc = transpile(qc, basis_gates=basis, optimization_level=0)
     gates = []
     for inst in qc.data:
-        nm = inst.operation.name
-        qs = tuple(qc.find_bit(q).index for q in inst.qubits)
-        if nm in ("barrier", "delay"):
+        gate = inst.operation.name.lower()
+        qubits = tuple(qc.find_bit(q).index for q in inst.qubits)
+        if gate in ("barrier", "delay"):
             continue
-        if nm == "rz":
-            ang = float(inst.operation.params[0])
-            if abs(ang / (math.pi / 2) - round(ang / (math.pi / 2))) < 1e-9:
-                gates.append(("s", qs))                       # Clifford angle
-            elif abs(ang / (math.pi / 4) - round(ang / (math.pi / 4))) < 1e-9:
-                gates.append(("t", qs))                       # odd multiple of pi/4
+        if gate == "rz":
+            angle = float(inst.operation.params[0])
+            units = angle / (math.pi / 4)
+            nearest = round(units)
+            if abs(units - nearest) < 1e-9:
+                k = ((nearest + 4) % 8) - 4
+                exact = {
+                    0: [], 1: [("t", qubits)], -1: [("tdg", qubits)],
+                    2: [("s", qubits)], -2: [("sdg", qubits)],
+                    3: [("s", qubits), ("t", qubits)],
+                    -3: [("sdg", qubits), ("tdg", qubits)],
+                    4: [("z", qubits)]
+                }
+                gates.extend(exact[k])
+            elif rz_t_count is not None:
+                gates.extend([("t", qubits)] * rz_t_count)
             else:
-                gates += [("t", qs)] * rz_t_count
+                raise ValueError(f"RZ angle {angle} is off the pi/4 grid; pass rz_t_count explicitly for a coarse approximation")
         else:
-            gates.append((nm, qs))
+            gates.append((gate, qubits))
     return Circuit.from_gates(qc.num_qubits, gates, name or getattr(qc, "name", "qiskit"))
 
 
@@ -217,6 +295,8 @@ class Result:
     cr_slots: int
     n_banks: int
     bank_capacity: int
+    msf_stall_cycles: int
+    total_transfer_cycles: int
 
     def asdict(self):
         return asdict(self)
@@ -236,6 +316,7 @@ class Simulator:
         self.cells = [[None] * cfg.bank_capacity for _ in range(B)]
         self.port_free = [0] * B
         self.lane_free = [0] * cfg.bus_lanes
+        self.scan_row = [cfg.line_initial_row] * B
         self.busy = set()                               # qubits inside a running op
         self.last_used = [0] * circuit.n_qubits
         self.started, self.finished = set(), set()
@@ -263,17 +344,20 @@ class Simulator:
         return sum(x["kind"] == "store" for x in self.xfers)
 
     def head(self):
-        """Lowest-index op not yet started."""
-        while self._head in self.started:
+        """Lowest-ID operation not yet started (fixed-order baseline helper)."""
+        while self._head < len(self.circuit.ops) and self._head in self.started:
             self._head += 1
         return self._head
 
     def next_use(self, q):
-        """Index of the first not-yet-started op using q (INF if none). Assumes the
-        started set is a prefix (true for fixed-order policies)."""
-        u = self.circuit.uses[q]
-        i = bisect.bisect_left(u, self.head())
-        return u[i] if i < len(u) else INF
+        """Lowest-ID not-yet-started use; valid even when operations start out of order."""
+        return next((i for i in self.circuit.uses[q] if i not in self.started), INF)
+
+    def ready_ops(self):
+        """All dependency-ready operations that have not yet started."""
+        return [i for i in range(len(self.circuit.ops))
+                if i not in self.started
+                and all(pred in self.finished for pred in self.circuit.preds[i])]
 
     # ------------------------------------------------------------ actions
     def try_exec(self, i):
@@ -289,9 +373,10 @@ class Simulator:
             self._tick()
             if self.ms_stock <= 0:
                 return False
-            if self.ms_stock == cfg.timing.magic_buffer:   # factory was stalled; restart it
+            if self.ms_stock == cfg.timing.magic_buffer:   # restart a full-buffer factory
                 self.ms_next = self.t + cfg.timing.magic_interval
             self.ms_stock -= 1
+            self.trace.append(dict(kind="magic_consume", time=self.t, op_id=i))
         end = self.t + cfg.timing.op_duration(op.kind)
         self.started.add(i); self.running.append((end, i)); self.busy.update(op.qubits)
         for q in op.qubits:
@@ -320,13 +405,16 @@ class Simulator:
             slot = free[0]
         elif self.slot_owner[slot] is not None:
             return False
-        end = self.t + self.cfg.xfer_time(cell)
+        if not isinstance(slot, int) or not 0 <= slot < self.cfg.cr_slots:
+            return False
+        end = self.t + self.cfg.xfer_time(cell, self.scan_row[b])
         self.slot_owner[slot] = q
         self.port_free[b] = self.lane_free[lane] = end
         self.loc[q] = ("XFER",)
         self.xfers.append(dict(end=end, kind="load", q=q, bank=b, cell=cell, slot=slot))
         self.trace.append(dict(kind="load", q=q, start=self.t, end=end, bank=b, cell=cell,
-                               slot=slot, lane=lane))
+                               slot=slot, lane=lane, scan_row_before=self.scan_row[b],
+                               target_row=self.cfg.depth(cell)))
         return True
 
     def try_store(self, q, bank=None, cell=None):
@@ -338,6 +426,10 @@ class Simulator:
         if lane is None:
             return False
         slot = self.loc[q][1]
+        if bank is not None and not 0 <= bank < self.cfg.n_banks:
+            return False
+        if cell is not None and not 0 <= cell < self.cfg.bank_capacity:
+            return False
         cands = []
         for b in ([bank] if bank is not None else range(self.cfg.n_banks)):
             if self.port_free[b] > self.t:
@@ -348,20 +440,23 @@ class Simulator:
         if not cands:
             return False
         cell, b = min(cands)
-        end = self.t + self.cfg.xfer_time(cell)
+        end = self.t + self.cfg.xfer_time(cell, self.scan_row[b])
         self.cells[b][cell] = q
         self.port_free[b] = self.lane_free[lane] = end
         self.loc[q] = ("XFER",)
         self.xfers.append(dict(end=end, kind="store", q=q, bank=b, cell=cell, slot=slot))
         self.trace.append(dict(kind="store", q=q, start=self.t, end=end, bank=b, cell=cell,
-                               slot=slot, lane=lane))
+                               slot=slot, lane=lane, scan_row_before=self.scan_row[b],
+                               target_row=self.cfg.depth(cell)))
         return True
 
     # ------------------------------------------------------------ engine
     def _tick(self):
         T = self.cfg.timing
         while self.ms_next <= self.t and self.ms_stock < T.magic_buffer:
-            self.ms_stock += 1; self.ms_next += T.magic_interval
+            self.ms_stock += 1
+            self.trace.append(dict(kind="magic_produce", time=self.t, stock=self.ms_stock))
+            self.ms_next += T.magic_interval
 
     def _complete(self):
         for e, i in [r for r in self.running if r[0] <= self.t]:
@@ -369,6 +464,7 @@ class Simulator:
             self.busy.difference_update(self.circuit.ops[i].qubits)
         for x in [x for x in self.xfers if x["end"] <= self.t]:
             self.xfers.remove(x); q = x["q"]
+            self.scan_row[x["bank"]] = self.cfg.depth(x["cell"])
             if x["kind"] == "load":
                 self.cells[x["bank"]][x["cell"]] = None
                 self.loc[q] = ("CR", x["slot"]); self.last_used[q] = self.t
@@ -378,32 +474,47 @@ class Simulator:
 
     def run(self) -> Result:
         n = len(self.circuit.ops)
+        msf_stall_cycles = 0
         while len(self.finished) < n:
             self._tick()
             while self.policy.step(self):
                 pass
-            cands = [e for e, _ in self.running] + [x["end"] for x in self.xfers]
-            if self.ms_stock < self.cfg.timing.magic_buffer and self.ms_next > self.t:
-                cands.append(self.ms_next)
-            if not cands:
+            candidates = [end for end, _ in self.running] + [x["end"] for x in self.xfers]
+            if self.ms_stock < self.cfg.timing.magic_buffer:
+                candidates.append(self.ms_next)
+            if not candidates:
                 raise DeadlockError(f"no progress at t={self.t}, policy={self.policy.name}")
-            self.t = min(cands)
+            next_time = min(candidates)
+            t_ready = any(
+                self.circuit.ops[i].kind == "T"
+                and all(self.state(q) == "CR" and q not in self.busy
+                        for q in self.circuit.ops[i].qubits)
+                for i in self.ready_ops()
+            )
+            if self.ms_stock <= 0 and t_ready:
+                msf_stall_cycles += next_time - self.t
+            self.t = next_time
             self._complete()
-        ops = sorted((e["start"], e["end"]) for e in self.trace if e["kind"] == "op")
-        busy_cycles, cur_s, cur_e = 0, None, None
-        for s, e in ops:                                  # union of op intervals
-            if cur_e is None or s > cur_e:
-                if cur_e is not None:
-                    busy_cycles += cur_e - cur_s
-                cur_s, cur_e = s, e
+
+        intervals = sorted((e["start"], e["end"]) for e in self.trace if e["kind"] == "op")
+        busy, start, end = 0, None, None
+        for a, b in intervals:
+            if end is None or a > end:
+                if end is not None:
+                    busy += end - start
+                start, end = a, b
             else:
-                cur_e = max(cur_e, e)
-        busy_cycles += (cur_e - cur_s) if cur_e is not None else 0
-        L = sum(e["kind"] == "load" for e in self.trace)
-        S = sum(e["kind"] == "store" for e in self.trace)
-        return Result(self.circuit.name, self.policy.name, self.t, L, S, L + S, busy_cycles,
-                      self.t - busy_cycles, self.cfg.physical_qubits(), self.cfg.cr_slots,
-                      self.cfg.n_banks, self.cfg.bank_capacity)
+                end = max(end, b)
+        if end is not None:
+            busy += end - start
+        loads = sum(e["kind"] == "load" for e in self.trace)
+        stores = sum(e["kind"] == "store" for e in self.trace)
+        transfer_cycles = sum(e["end"] - e["start"] for e in self.trace
+                              if e["kind"] in ("load", "store"))
+        return Result(self.circuit.name, self.policy.name, self.t, loads, stores,
+                      loads + stores, busy, self.t - busy, self.cfg.physical_qubits(),
+                      self.cfg.cr_slots, self.cfg.n_banks, self.cfg.bank_capacity,
+                      msf_stall_cycles, transfer_cycles)
 
 # ============================================================================
 # 4. VALIDATE
@@ -425,6 +536,179 @@ def _max_concurrency(ivs):
 
 
 def validate_schedule(trace, circuit, cfg, initial_loc):
+    """Independently validate operation, placement, transfer, and resource constraints."""
+    errs = []
+    known = {"op", "load", "store", "magic_consume", "magic_produce"}
+    for index, event in enumerate(trace):
+        if event.get("kind") not in known:
+            errs.append(f"event {index}: unknown kind {event.get('kind')!r}")
+        if event.get("kind") in ("op", "load", "store"):
+            if not isinstance(event.get("start"), (int, float)) or not isinstance(event.get("end"), (int, float)):
+                errs.append(f"event {index}: missing/non-numeric interval")
+            elif event["start"] < 0 or event["end"] <= event["start"]:
+                errs.append(f"event {index}: invalid interval [{event['start']}, {event['end']})")
+
+    op_events = [e for e in trace if e.get("kind") == "op"]
+    seen = {}
+    for e in op_events:
+        op_id = e.get("id")
+        if not isinstance(op_id, int) or not 0 <= op_id < len(circuit.ops):
+            errs.append(f"operation has invalid ID {op_id!r}")
+            continue
+        if op_id in seen:
+            errs.append(f"op {op_id} executed twice")
+            continue
+        seen[op_id] = e
+        op = circuit.ops[op_id]
+        if tuple(e.get("qubits", ())) != tuple(op.qubits):
+            errs.append(f"op {op_id}: operands differ from circuit")
+        if e.get("end", 0) - e.get("start", 0) != cfg.timing.op_duration(op.kind):
+            errs.append(f"op {op_id}: wrong duration")
+        for pred in circuit.preds[op_id]:
+            pe = next((x for x in op_events if x.get("id") == pred), None)
+            if pe is None or pe.get("end", INF) > e.get("start", -INF):
+                errs.append(f"op {op_id}: dependency on op {pred} violated")
+    missing = sorted(set(range(len(circuit.ops))) - set(seen))
+    if missing:
+        errs.append(f"operations missing from trace: {missing[:10]}")
+
+    # Reconstruct each qubit's residency and reserve source/destination resources
+    # for the complete duration of each transfer.
+    per_q = {q: [] for q in range(circuit.n_qubits)}
+    for e in trace:
+        kind = e.get("kind")
+        if kind == "op":
+            qubits = e.get("qubits", ())
+        elif kind in ("load", "store"):
+            qubits = (e.get("q"),)
+        else:
+            continue
+        for q in qubits:
+            if not isinstance(q, int) or q not in per_q:
+                errs.append(f"event references invalid qubit {q!r}")
+            else:
+                per_q[q].append(e)
+
+    slot_intervals, cell_intervals = {}, {}
+    for q, events in per_q.items():
+        initial = initial_loc.get(q)
+        if not isinstance(initial, tuple) or len(initial) != 3 or initial[0] != "SAM":
+            errs.append(f"q{q}: invalid/missing initial location")
+            continue
+        _, bank, cell = initial
+        if not (isinstance(bank, int) and 0 <= bank < cfg.n_banks
+                and isinstance(cell, int) and 0 <= cell < cfg.bank_capacity):
+            errs.append(f"q{q}: initial SAM location out of range")
+            continue
+        state, current_cell, current_slot = "SAM", (bank, cell), None
+        cell_start, slot_start, previous_end = 0, None, 0
+        events.sort(key=lambda x: (x["start"], x["end"]))
+        for e in events:
+            if e["start"] < previous_end:
+                errs.append(f"q{q}: events overlap at t={e['start']}")
+            previous_end = max(previous_end, e["end"])
+            kind = e.get("kind")
+            if kind == "load":
+                b, c, slot = e.get("bank"), e.get("cell"), e.get("slot")
+                if state != "SAM" or current_cell != (b, c):
+                    errs.append(f"q{q}: load from invalid SAM location/state")
+                if not (isinstance(b, int) and 0 <= b < cfg.n_banks
+                        and isinstance(c, int) and 0 <= c < cfg.bank_capacity):
+                    errs.append(f"q{q}: invalid load cell")
+                if not (isinstance(slot, int) and 0 <= slot < cfg.cr_slots):
+                    errs.append(f"q{q}: invalid CR slot")
+                if current_cell is not None:
+                    cell_intervals.setdefault(current_cell, []).append((cell_start, e["end"], q))
+                state, current_cell, current_slot = "CR", None, slot
+                slot_start = e["start"]
+            elif kind == "store":
+                b, c, slot = e.get("bank"), e.get("cell"), e.get("slot")
+                if state != "CR" or current_slot != slot:
+                    errs.append(f"q{q}: store from invalid CR slot/state")
+                if not (isinstance(b, int) and 0 <= b < cfg.n_banks
+                        and isinstance(c, int) and 0 <= c < cfg.bank_capacity):
+                    errs.append(f"q{q}: invalid store destination")
+                if current_slot is not None and slot_start is not None:
+                    slot_intervals.setdefault(current_slot, []).append((slot_start, e["end"], q))
+                state, current_cell, current_slot = "SAM", (b, c), None
+                cell_start, slot_start = e["start"], None
+            elif kind == "op" and state != "CR":
+                errs.append(f"q{q}: op {e.get('id')} starts while qubit is not in CR")
+        if current_cell is not None:
+            cell_intervals.setdefault(current_cell, []).append((cell_start, INF, q))
+        if current_slot is not None and slot_start is not None:
+            slot_intervals.setdefault(current_slot, []).append((slot_start, INF, q))
+
+    initial_cells = [(initial_loc[q][1], initial_loc[q][2]) for q in initial_loc
+                     if isinstance(initial_loc[q], tuple) and len(initial_loc[q]) == 3]
+    if len(initial_cells) != len(set(initial_cells)):
+        errs.append("initial placement assigns multiple qubits to one cell")
+    if set(initial_loc) != set(range(circuit.n_qubits)):
+        errs.append("initial placement does not cover exactly all circuit qubits")
+
+    def no_overlap(intervals, label):
+        ordered = sorted(intervals, key=lambda x: (x[0], x[1]))
+        for left, right in zip(ordered, ordered[1:]):
+            if right[0] < left[1]:
+                errs.append(f"{label}: overlap {left} vs {right}")
+
+    for slot, intervals in slot_intervals.items():
+        no_overlap(intervals, f"CR slot {slot}")
+    for cell_key, intervals in cell_intervals.items():
+        no_overlap(intervals, f"SAM cell {cell_key}")
+
+    transfers = [e for e in trace if e.get("kind") in ("load", "store")]
+    for bank in range(cfg.n_banks):
+        bank_events = sorted((e for e in transfers if e.get("bank") == bank),
+                             key=lambda e: (e["start"], e["end"]))
+        no_overlap([(e["start"], e["end"], e.get("q")) for e in bank_events],
+                   f"bank {bank} port")
+        row = cfg.line_initial_row
+        for e in bank_events:
+            cell = e.get("cell")
+            if not isinstance(cell, int) or not 0 <= cell < cfg.bank_capacity:
+                continue
+            if e["end"] - e["start"] != cfg.xfer_time(cell, row):
+                errs.append(f"{e['kind']} q{e.get('q')}: wrong SAM transfer duration")
+            if e.get("scan_row_before") != row or e.get("target_row") != cfg.depth(cell):
+                errs.append(f"{e['kind']} q{e.get('q')}: inconsistent scan-line metadata")
+            row = cfg.depth(cell)
+
+    lane_intervals = {}
+    for e in transfers:
+        lane = e.get("lane")
+        if not isinstance(lane, int) or not 0 <= lane < cfg.bus_lanes:
+            errs.append(f"transfer q{e.get('q')}: invalid bus lane")
+        else:
+            lane_intervals.setdefault(lane, []).append((e["start"], e["end"], e.get("q")))
+    for lane, intervals in lane_intervals.items():
+        no_overlap(intervals, f"bus lane {lane}")
+    if _max_concurrency([(e["start"], e["end"]) for e in transfers]) > cfg.bus_lanes:
+        errs.append("bus-lane limit exceeded")
+    if _max_concurrency([(e["start"], e["end"]) for e in op_events]) > cfg.max_parallel_ops:
+        errs.append("parallel-operation limit exceeded")
+
+    # Verify magic-state inventory using explicit production/consumption events.
+    magic_events = [e for e in trace if e.get("kind") in ("magic_produce", "magic_consume")]
+    stock = cfg.timing.magic_buffer
+    ordered_magic = sorted(magic_events,
+                           key=lambda e: (e["time"], 0 if e["kind"] == "magic_produce" else 1))
+    for event in ordered_magic:
+        if event["kind"] == "magic_produce":
+            stock += 1
+            if stock > cfg.timing.magic_buffer:
+                errs.append("magic-state buffer overflow")
+        else:
+            stock -= 1
+            if stock < 0:
+                errs.append("magic-state inventory became negative")
+    t_ops = {e["id"] for e in op_events if 0 <= e.get("id", -1) < len(circuit.ops)
+             and circuit.ops[e["id"]].kind == "T"}
+    consumed_ids = [e.get("op_id") for e in magic_events if e["kind"] == "magic_consume"]
+    if len(consumed_ids) != len(t_ops) or set(consumed_ids) != t_ops:
+        errs.append("magic-state consumption events do not match T-gate executions")
+    return errs
+trace, circuit, cfg, initial_loc):
     errs = []
     ops = [e for e in trace if e["kind"] == "op"]
     seen = {}
