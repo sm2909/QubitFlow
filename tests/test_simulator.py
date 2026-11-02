@@ -45,13 +45,52 @@ class ConfigAndCircuitTests(unittest.TestCase):
         self.assertGreater(len(circ.ops), 5)
         self.assertTrue(all(len(op.qubits) in (1, 2) for op in circ.ops))
 
-    def test_line_sam_latency_tracks_scan_row(self):
+    def test_line_sam_latency_is_vertical_distance(self):
         cfg = core.ArchConfig(cr_slots=2, n_banks=1, bank_capacity=16,
-                              bank_width=4, line_initial_row=0,
-                              line_access_cost=2, line_move_per_row=3)
-        self.assertEqual(cfg.xfer_time(1, 0), 2)
-        self.assertEqual(cfg.xfer_time(13, 0), 11)
-        self.assertEqual(cfg.xfer_time(13, 3), 2)
+                              bank_width=4, line_initial_row=1)
+        self.assertEqual(cfg.xfer_time(4, 1), 0)
+        self.assertEqual(cfg.xfer_time(12, 1), 2)
+        self.assertEqual(cfg.xfer_time(0, 3), 3)
+
+    def test_line_sam_defaults_to_one_lane_per_bank(self):
+        cfg = core.ArchConfig(cr_slots=2, n_banks=3, bank_capacity=4)
+        self.assertEqual(cfg.bus_lanes, 3)
+
+    def test_zero_latency_gate_and_transfer_complete(self):
+        circ = core.Circuit.from_gates(2, [("x", (0,)), ("cx", (0, 1))])
+        sim, result = run_checked(circ, policy="joint", cr_slots=2,
+                                  n_banks=2, bank_capacity=1, bus_lanes=2)
+        self.assertGreaterEqual(result.cycles, 0)
+        self.assertTrue(any(e["kind"] == "load" and e["start"] == e["end"]
+                            for e in sim.trace))
+
+    def test_factory_rate_and_buffer_scale_with_factory_count(self):
+        timing = core.Timing(magic_factories=3, magic_interval=15)
+        self.assertEqual(timing.magic_buffer, 6)
+        circ = core.Circuit.from_gates(1, [("t", (0,)) for _ in range(10)])
+        cfg = core.ArchConfig(cr_slots=2, n_banks=1, bank_capacity=1,
+                              timing=timing)
+        sim = core.Simulator(circ, cfg, make_policy("joint"))
+        sim.run()
+        produced = [e for e in sim.trace if e["kind"] == "magic_produce"]
+        self.assertTrue(all(e["count"] <= 3 for e in produced))
+
+    def test_initially_resident_register_configuration(self):
+        circ = core.Circuit.from_gates(2, [("h", (0,)), ("cx", (0, 1))])
+        cfg = config(2, cr_slots=2)
+        sim = core.Simulator(circ, cfg, make_policy("joint"), initially_resident=True)
+        result = sim.run()
+        self.assertEqual(result.transfers, 0)
+        self.assertEqual(core.validate_schedule(sim.trace, circ, cfg, sim.initial_loc), [])
+
+    def test_qasm_import_real_qasmbench_circuit(self):
+        import os
+        path = os.path.join(os.path.dirname(__file__), "..", "benchmarks", "adder_n10.qasm")
+        circ = core.from_qasm(path)
+        self.assertEqual(circ.n_qubits, 10)
+        self.assertGreater(len(circ.ops), 250)
+        self.assertGreater(sum(op.kind == "T" for op in circ.ops), 0)
+
 
 
 class SimulatorTests(unittest.TestCase):
