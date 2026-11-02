@@ -111,7 +111,7 @@ class ArchConfig:
             raise ValueError("line_move_per_row must be non-negative")
         rows = math.ceil(self.bank_capacity / self.bank_width)
         if self.line_initial_row is None:
-            object.__setattr__(self, "line_initial_row", (rows - 1) // 2)
+            object.__setattr__(self, "line_initial_row", 0)
         if not 0 <= self.line_initial_row < rows:
             raise ValueError("line_initial_row is outside the SAM bank")
 
@@ -163,7 +163,7 @@ class Op:
 
 class Circuit:
     def __init__(self, n_qubits: int, ops: list, name: str = "circuit"):
-        if not isinstance(n_qubits, int) or n_qubits < 0:
+        if not isinstance(n_qubits, int) or isinstance(n_qubits, bool) or n_qubits < 0:
             raise ValueError("n_qubits must be a non-negative integer")
         self.n_qubits, self.ops, self.name = n_qubits, list(ops), name
         last, self.preds = {}, []
@@ -171,14 +171,14 @@ class Circuit:
         for i, op in enumerate(self.ops):
             if not isinstance(op, Op):
                 raise TypeError(f"ops[{i}] must be an Op")
-            if op.id != i:
+            if not isinstance(op.id, int) or isinstance(op.id, bool) or op.id != i:
                 raise ValueError("operation IDs must be contiguous and match list positions")
             if op.kind not in {"1q", "2q", "T", "meas"} or op.name not in _SUPPORTED_GATES:
                 raise ValueError(f"unsupported operation at op {i}: {op.name!r} ({op.kind})")
             arity = 2 if op.kind == "2q" else 1
             if len(op.qubits) != arity or len(set(op.qubits)) != arity:
                 raise ValueError(f"op {i} must have {arity} distinct operand(s)")
-            if any(not isinstance(q, int) or q < 0 or q >= n_qubits for q in op.qubits):
+            if any(not isinstance(q, int) or isinstance(q, bool) or q < 0 or q >= n_qubits for q in op.qubits):
                 raise ValueError(f"op {i} contains an out-of-range qubit index")
             self.preds.append(sorted({last[q] for q in op.qubits if q in last}))
             for q in op.qubits:
@@ -189,6 +189,8 @@ class Circuit:
     def from_gates(cls, n_qubits, gates, name="circuit"):
         ops = []
         for i, (gate, qubits) in enumerate(gates):
+            if not isinstance(gate, str):
+                raise TypeError("gate names must be strings")
             gate, qubits = gate.lower(), tuple(qubits)
             if len(qubits) not in (1, 2):
                 raise ValueError(f"gate {gate!r} has unsupported arity {len(qubits)}")
@@ -374,6 +376,7 @@ def from_qasm(path: str, **kw) -> Circuit:
         source = handle.read()
     source = re.sub(r"//[^\n]*", "", source)
     qregs, cregs, gates = {}, {}, []
+    measured_qubits = set()
     statements = [x.strip() for x in source.split(";") if x.strip()]
     qtotal = 0
     for statement in statements:
@@ -403,7 +406,11 @@ def from_qasm(path: str, **kw) -> Circuit:
             base, size = qregs[reg]
             if not 0 <= int(idx) < size or not 0 <= int(cidx) < cregs[creg]:
                 raise ValueError(f"measurement index out of range: {statement}")
-            gates.append(("measure", (base + int(idx),)))
+            qubit = base + int(idx)
+            if qubit in measured_qubits:
+                raise ValueError(f"duplicate measurement of qubit: {statement}")
+            gates.append(("measure", (qubit,)))
+            measured_qubits.add(qubit)
             continue
         m = re.fullmatch(r"([a-zA-Z][a-zA-Z0-9_]*)\s*(?:\(([^()]*)\))?\s+(.+)", statement)
         if not m:
@@ -422,6 +429,8 @@ def from_qasm(path: str, **kw) -> Circuit:
             if not 0 <= int(idx) < size:
                 raise ValueError(f"qubit index out of range: {operand}")
             operands.append(base + int(idx))
+        if any(q in measured_qubits for q in operands):
+            raise ValueError(f"operation after measurement is unsupported: {statement}")
         if gate == "rz":
             if angle is None or len(operands) != 1:
                 raise ValueError(f"malformed RZ statement: {statement}")
