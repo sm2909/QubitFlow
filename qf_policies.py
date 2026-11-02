@@ -16,7 +16,7 @@ class FixedOrderPolicy:
         self.lookahead, self.eviction = lookahead, eviction
         self.name = name or f"fixed(W={lookahead},{eviction})"
 
-    def _victim(self, sim, protect):
+    def _victim(self, sim, protect, target_next=None):
         candidates = [q for q in sim.loc if sim.state(q) == "CR"
                       and q not in sim.busy and q not in protect]
         if not candidates:
@@ -24,7 +24,10 @@ class FixedOrderPolicy:
         if self.eviction == "lru":
             return min(candidates, key=lambda q: (sim.last_used[q], q))
         # Offline Belady oracle for fixed program-order issue.
-        return max(candidates, key=lambda q: (sim.next_use(q), -sim.last_used[q]))
+        victim = max(candidates, key=lambda q: (sim.next_use(q), -sim.last_used[q]))
+        if target_next is not None and sim.next_use(victim) <= target_next:
+            return None
+        return victim
 
     def step(self, sim):
         circuit, n, progress = sim.circuit, len(sim.circuit.ops), False
@@ -45,7 +48,12 @@ class FixedOrderPolicy:
                 if sim.free_slots() > reserve:
                     progress |= sim.try_load(q)
                 elif demand or self.eviction == "belady":
-                    victim = self._victim(sim, protected)
+                    pending = sim.pending_stores()
+                    if sim.free_slots() + pending >= missing_head + (0 if demand else 1):
+                        continue
+                    victim = self._victim(
+                        sim, protected, None if demand else sim.next_use(q)
+                    )
                     if victim is not None:
                         progress |= sim.try_store(victim)
         return progress
