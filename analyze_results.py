@@ -13,7 +13,6 @@ def main(path="results.csv"):
             groups[row["comparison_group"]][row["policy"]] = row
 
     workload_rows = []
-    policy_samples = defaultdict(list)
     for group, policies in sorted(groups.items()):
         baseline = policies.get("lsqca-lazy")
         if baseline is None:
@@ -23,8 +22,6 @@ def main(path="results.csv"):
             cycles = int(row["cycles"])
             speedup = base_cycles / cycles if cycles else 1.0
             delta = cycles - base_cycles
-            policy_samples[policy].append((speedup, delta,
-                                           int(row["transfers"]) - int(baseline["transfers"])))
             workload_rows.append({
                 "experiment_axis": row.get("experiment_axis", "architecture_and_access_sensitivity"),
                 "comparison_group": group,
