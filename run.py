@@ -85,9 +85,8 @@ CIRCUITS = [
     ],
 ]
 
-# A fixed per-bank capacity is used for every policy/configuration comparison.
-# 144 cells in a 12x12 array permits all bundled workloads, including 118 qubits,
-# to fit in the SAM even in the one-bank architecture point.
+# The experiment holds total SAM data capacity fixed at 144 cells for every
+# bank-count point. Per-bank geometry changes to remain approximately square.
 ARCH_BASE = {
     "d": 11,
     "cr_slots": 4,
