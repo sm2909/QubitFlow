@@ -359,7 +359,7 @@ class SimulatorTests(unittest.TestCase):
         sim.run()
         trace = [dict(event) for event in sim.trace]
         production = next(e for e in trace
-                          if e["kind"] == "magic_produce" and e["time"] == 15)
+                          if e["kind"] == "magic_produce" and e["time"] == 12)
         trace.remove(production)
         errors = core.validate_schedule(trace, circ, cfg, sim.initial_loc)
         self.assertTrue(any("production mismatch" in error for error in errors), errors)
