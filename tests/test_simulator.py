@@ -211,12 +211,18 @@ class ConfigAndCircuitTests(unittest.TestCase):
 
     def test_vendor_qasmbench_circuits_import(self):
         root = Path(__file__).resolve().parents[1] / "benchmarks"
-        adder = core.from_qasm(str(root / "qasmb_adder_n28.qasm"))
-        multiplier = core.from_qasm(str(root / "qasmb_multiplier_n15.qasm"))
-        self.assertEqual(adder.n_qubits, 28)
-        self.assertEqual(multiplier.n_qubits, 15)
-        self.assertGreater(sum(op.kind == "T" for op in adder.ops), 0)
-        self.assertGreater(sum(op.kind == "T" for op in multiplier.ops), 0)
+        expected = {
+            "qasmb_adder_n28.qasm": 28,
+            "qasmb_multiplier_n15.qasm": 15,
+            "qasmb_adder_n118.qasm": 118,
+            "qasmb_multiplier_n45.qasm": 45,
+        }
+        for filename, qubits in expected.items():
+            with self.subTest(filename=filename):
+                circuit = core.from_qasm(str(root / filename))
+                self.assertEqual(circuit.n_qubits, qubits)
+                self.assertGreater(len(circuit.ops), 0)
+                self.assertGreater(sum(op.kind == "2q" for op in circuit.ops), 0)
 
 
 class SimulatorTests(unittest.TestCase):
@@ -326,8 +332,9 @@ class SimulatorTests(unittest.TestCase):
         cfg = core.ArchConfig(
             cr_slots=4, n_banks=2, bank_capacity=8, bank_width=2,
         )
-        for name in ("lsqca_lazy", "fixed_prefetch", "fixed_belady",
-                     "dag_no_prefetch", "joint"):
+        for name in ("lsqca_lazy", "fixed_prefetch",
+                     "fixed_farthest_next_use", "dag_lru",
+                     "dag_next_use", "dag_next_use_nearest", "joint"):
             with self.subTest(policy=name):
                 run_checked(circ, name, cfg=cfg)
 
