@@ -1,15 +1,17 @@
 # Bundled QASMBench workloads
 
-These transpiled OpenQASM 2 inputs are from the PNNL QASMBench repository
+These four vendor-transpiled OpenQASM 2 inputs are from the PNNL QASMBench repository
 (Battelle Memorial Institute, 2020), redistributed under the license reproduced
-in `QASMBENCH_LICENSE`; see `QASMBENCH_NOTICE`.
+in `QASMBENCH_LICENSE`; see `QASMBENCH_NOTICE`. All workloads use the upstream
+`*_transpiled.qasm` representation, rather than mixing original CCX circuits
+with vendor-transpiled gate sets.
 
-| Bundled file | Upstream workload | Qubits | Upstream gate count | Upstream depth |
+| Bundled file | Upstream workload | Qubits | Original source gate count | Original source depth | Two-qubit gates | Representation |
 |---|---|---:|---:|---:|
-| `qasmb_adder_n28.qasm` | `large/adder_n28` | 28 | 856 | 42 |
-| `qasmb_multiplier_n15.qasm` | `medium/multiplier_n15` | 15 | 1,222 | 49 |
-| `qasmb_adder_n118.qasm` | `large/adder_n118` | 118 | 3,706 | 132 |
-| `qasmb_multiplier_n45.qasm` | `large/multiplier_n45` | 45 | 12,785 | 462 |
+| `qasmb_adder_n28.qasm` | `large/adder_n28` | 28 | 856 | 42 | 195 | Vendor transpiled |
+| `qasmb_multiplier_n15.qasm` | `medium/multiplier_n15` | 15 | 1,222 | 49 | 246 | Vendor transpiled |
+| `qasmb_adder_n118.qasm` | `large/adder_n118` | 118 | 3,706 | 132 | 845 | Vendor transpiled |
+| `qasmb_multiplier_n45.qasm` | `large/multiplier_n45` | 45 | 12,785 | 462 | 2,574 | Vendor transpiled |
 
 Upstream source revision: `357b942396d5c2b7cbc1c229c585a6ef5ccaebac` (immutable Git commit).
 
@@ -19,9 +21,12 @@ Pinned upstream source paths:
 - [adder_n118](https://github.com/pnnl/QASMBench/blob/357b942396d5c2b7cbc1c229c585a6ef5ccaebac/large/adder_n118/adder_n118_transpiled.qasm)
 - [multiplier_n45](https://github.com/pnnl/QASMBench/blob/357b942396d5c2b7cbc1c229c585a6ef5ccaebac/large/multiplier_n45/multiplier_n45_transpiled.qasm)
 
-The upstream gate counts and depths are source metadata, not the instruction
-counts and makespans produced by QubitFlow. The exact bundled source files are
-hash-recorded in `experiment_manifest.json`.
+The upstream gate counts, two-qubit counts, and depths describe the original
+benchmark circuits; they are not counts of the vendor-transpiled input or the
+normalized operations imported by QubitFlow. The manifest records, separately,
+the exact input-file SHA-256, imported operation count, and imported gate-kind
+counts. This separation is necessary because transpilation and Clifford+T
+normalization change the instruction representation.
 
 The restricted importer expands CCX into a standard Clifford+T decomposition,
 SX into H-S-H, and exact pi/4-grid RZ rotations into Clifford+T (up to global
