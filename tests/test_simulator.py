@@ -101,15 +101,19 @@ class ConfigAndCircuitTests(unittest.TestCase):
 
     def test_toffoli_decomposition_is_exact_on_all_basis_states(self):
         circ = core.Circuit.from_gates(3, core._toffoli(0, 1, 2), "toffoli")
+        global_phase = None
         for basis in range(8):
             state = apply_basis_circuit(circ, basis)
             expected = basis ^ (1 << 2 if (basis & 0b11) == 0b11 else 0)
             self.assertAlmostEqual(abs(state[expected]), 1.0, places=8)
             self.assertTrue(all(abs(v) < 1e-8 for i, v in enumerate(state)
                                 if i != expected))
+            global_phase = state[expected] if global_phase is None else global_phase
+            self.assertLess(abs(state[expected] - global_phase), 1e-8)
 
     def test_two_bit_cuccaro_adder_on_all_classical_inputs(self):
         circ = core.adder(2)
+        global_phase = None
         for a in range(4):
             for b in range(4):
                 basis = (((a >> 0) & 1) << 1) | (((b >> 0) & 1) << 2) \
@@ -122,6 +126,8 @@ class ConfigAndCircuitTests(unittest.TestCase):
                 self.assertAlmostEqual(abs(state[expected]), 1.0, places=8)
                 self.assertTrue(all(abs(v) < 1e-8 for i, v in enumerate(state)
                                     if i != expected))
+                global_phase = state[expected] if global_phase is None else global_phase
+                self.assertLess(abs(state[expected] - global_phase), 1e-8)
 
     def test_random_seed_is_deterministic(self):
         self.assertEqual(
