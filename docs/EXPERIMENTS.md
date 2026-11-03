@@ -64,7 +64,7 @@ Transfer count alone is not an execution-time metric. `non_exec_cycles` includes
 
 ## Aggregation and statistical limits
 
-For each configuration, speedup is paired against the program-order LRU baseline:
+For each configuration, speedup is paired against `lsqca_lazy`, QubitFlow's program-order demand-paging LRU reference (not a full LSQCA policy reproduction):
 
 `speedup = cycles(LRU) / cycles(candidate)`.
 
