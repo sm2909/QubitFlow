@@ -93,6 +93,12 @@ class ConfigAndCircuitTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             core.Circuit.from_gates(1, [("u3", (0,))])
 
+    def test_reject_direct_operation_kind_gate_mismatch(self):
+        with self.assertRaises(ValueError):
+            core.Circuit(2, [core.Op(0, "1q", (0,), "cx")])
+        with self.assertRaises(ValueError):
+            core.Circuit(1, [core.Op(0, "T", (0,), "h")])
+
     def test_toffoli_decomposition_is_exact_on_all_basis_states(self):
         circ = core.Circuit.from_gates(3, core._toffoli(0, 1, 2), "toffoli")
         for basis in range(8):
