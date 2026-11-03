@@ -91,6 +91,9 @@ class JointPolicy:
         self.eviction = eviction
         self.transfer_priority = transfer_priority
         self.name = name
+        # Qubits in this set were loaded speculatively and remain counted
+        # against the configured window until the first consuming op starts.
+        self.prefetched_qubits = set()
 
     def _graph(self, sim):
         n = len(sim.circuit.ops)
@@ -173,6 +176,17 @@ class JointPolicy:
 
     def step(self, sim):
         progress = False
+        # A speculative load consumes a window slot while in flight or resident.
+        # Release the slot only after a consumer starts or the qubit leaves CR/SAM
+        # due to an eviction/transfer decision.
+        consumed = {
+            q for op_id in sim.started
+            for q in sim.circuit.ops[op_id].qubits
+        }
+        self.prefetched_qubits = {
+            q for q in self.prefetched_qubits
+            if q not in consumed and sim.state(q) in ("XFER", "CR")
+        }
         critical, remaining = self._graph(sim)
         ready = sim.ready_ops()
         ranked = sorted(ready, key=lambda i: self._rank(sim, i, critical), reverse=True)
@@ -226,13 +240,17 @@ class JointPolicy:
             prefetch_requests.sort(
                 key=lambda item: self._transfer_key(sim, item[0], item[1], critical)
             )
+            # Width is the maximum number of speculative qubits outstanding
+            # (in flight or resident), not merely a per-call issue count.
+            available = max(0, self.prefetch_width - len(self.prefetched_qubits))
             count = 0
             for _, q in prefetch_requests:
-                if count >= self.prefetch_width or sim.free_slots() <= 0:
+                if count >= available or sim.free_slots() <= 0:
                     break
                 if sim.try_load(q):
                     progress = True
                     count += 1
+                    self.prefetched_qubits.add(q)
         return progress
 
 
