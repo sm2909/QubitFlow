@@ -39,25 +39,39 @@ def sha256_file(path):
 
 
 def expected_comparison_groups(manifest):
+    """Return expected group IDs and policy-name sets by experiment axis."""
     workloads = manifest["workloads"]
-    groups = set()
+    matrices = manifest["policy_matrices"]
+    expected = {}
     for workload in workloads:
         tag = workload["tag"]
         for cr_slots in manifest["architecture_sweep"]["cr_slots"]:
             for n_banks in manifest["architecture_sweep"]["n_banks"]:
                 for access_cost in manifest["architecture_sweep"]["line_access_cost"]:
-                    t_2q = manifest["architecture_base"].get("t_2q", 1)
-                    groups.add(
+                    group = (
                         f"{tag}:architecture_and_access_sensitivity:"
-                        f"CR{cr_slots}:B{n_banks}:access{access_cost}:t2q{t_2q}"
+                        f"CR{cr_slots}:B{n_banks}:access{access_cost}:t2q1"
                     )
+                    expected[group] = {
+                        item["policy_name"]
+                        for item in matrices["architecture_and_access_sensitivity"]
+                    }
+
+        group = f"{tag}:policy_ablation:CR4:B2:access1:t2q1"
+        expected[group] = {
+            item["policy_name"] for item in matrices["policy_ablation"]
+        }
+
         for t_2q in manifest["two_qubit_timing_sweep"]:
-            groups.add(
+            group = (
                 f"{tag}:two_qubit_timing_sensitivity:"
                 f"CR4:B2:access1:t2q{t_2q}"
             )
-    return groups
-
+            expected[group] = {
+                item["policy_name"]
+                for item in matrices["two_qubit_timing_sensitivity"]
+            }
+    return expected
 
 def validate_manifest_hashes(manifest):
     mismatches = []
@@ -75,10 +89,6 @@ def validate_manifest_hashes(manifest):
 
 
 def validate_completeness(rows, manifest):
-    expected = {
-        make_policy(item["key"], **item["params"]).name
-        for item in manifest["policies"]
-    }
     groups = defaultdict(dict)
     for row in rows:
         if row["policy"] == "all_qubits_in_CR_lower_bound":
@@ -91,8 +101,8 @@ def validate_completeness(rows, manifest):
 
     expected_groups = expected_comparison_groups(manifest)
     observed_groups = set(groups)
-    missing_groups = sorted(expected_groups - observed_groups)
-    extra_groups = sorted(observed_groups - expected_groups)
+    missing_groups = sorted(set(expected_groups) - observed_groups)
+    extra_groups = sorted(observed_groups - set(expected_groups))
     if missing_groups or extra_groups:
         raise ValueError(
             f"incomplete/extra experiment groups: missing={missing_groups[:12]}, "
@@ -100,6 +110,9 @@ def validate_completeness(rows, manifest):
         )
 
     for group, observed in groups.items():
+        if group not in expected_groups:
+            raise ValueError(f"unexpected comparison group {group}")
+        expected = expected_groups[group]
         missing = sorted(expected - set(observed))
         extra = sorted(set(observed) - expected)
         if missing or extra:
