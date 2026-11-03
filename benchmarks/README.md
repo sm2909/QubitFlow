@@ -6,12 +6,12 @@ in `QASMBENCH_LICENSE`; see `QASMBENCH_NOTICE`. All workloads use the upstream
 `*_transpiled.qasm` representation, rather than mixing original CCX circuits
 with vendor-transpiled gate sets.
 
-| Bundled file | Upstream workload | Qubits | Original source gate count | Original source depth | Two-qubit gates | Representation |
+| Bundled file | Upstream workload | Qubits | Original source gates | Original depth | Original two-qubit gates | Imported QubitFlow ops | Representation |
 |---|---|---:|---:|---:|
-| `qasmb_adder_n28.qasm` | `large/adder_n28` | 28 | 856 | 42 | 195 | Vendor transpiled |
-| `qasmb_multiplier_n15.qasm` | `medium/multiplier_n15` | 15 | 1,222 | 49 | 246 | Vendor transpiled |
-| `qasmb_adder_n118.qasm` | `large/adder_n118` | 118 | 3,706 | 132 | 845 | Vendor transpiled |
-| `qasmb_multiplier_n45.qasm` | `large/multiplier_n45` | 45 | 12,785 | 462 | 2,574 | Vendor transpiled |
+| `qasmb_adder_n28.qasm` | `large/adder_n28` | 28 | 856 | 42 | 195 | 644 | Vendor transpiled |
+| `qasmb_multiplier_n15.qasm` | `medium/multiplier_n15` | 15 | 1,222 | 49 | 246 | 651 | Vendor transpiled |
+| `qasmb_adder_n118.qasm` | `large/adder_n118` | 118 | 3,706 | 132 | 845 | 2,784 | Vendor transpiled |
+| `qasmb_multiplier_n45.qasm` | `large/multiplier_n45` | 45 | 12,785 | 462 | 2,574 | 6,286 | Vendor transpiled |
 
 Upstream source revision: `357b942396d5c2b7cbc1c229c585a6ef5ccaebac` (immutable Git commit).
 
@@ -25,7 +25,9 @@ The upstream gate counts, two-qubit counts, and depths describe the original
 benchmark circuits; they are not counts of the vendor-transpiled input or the
 normalized operations imported by QubitFlow. The manifest records, separately,
 the exact input-file SHA-256, imported operation count, and imported gate-kind
-counts. This separation is necessary because transpilation and Clifford+T
+counts. The imported operation counts above are regression-tested. They include
+the deterministic expansion of SX to H-S-H and exact pi/4-grid RZ rotations to
+Clifford+T; they are not the original source gate counts. This separation is necessary because transpilation and Clifford+T
 normalization change the instruction representation.
 
 The restricted importer expands CCX into a standard Clifford+T decomposition,
