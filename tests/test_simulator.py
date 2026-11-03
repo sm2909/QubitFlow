@@ -210,6 +210,18 @@ class ConfigAndCircuitTests(unittest.TestCase):
         self.assertEqual([op.name for op in circ.ops],
                          ["s", "sdg", "t", "s", "t"])
 
+    def test_qasm_sx_expands_to_h_s_h(self):
+        circ = parse_qasm("""OPENQASM 2.0;
+            include "qelib1.inc";
+            qreg q[1];
+            sx q[0];
+            sxdg q[0];
+        """)
+        self.assertEqual(
+            [op.name for op in circ.ops],
+            ["h", "s", "h", "h", "sdg", "h"],
+        )
+
     def test_qasm_rejects_non_clifford_t_exact_rotation(self):
         with self.assertRaises(ValueError):
             parse_qasm("""OPENQASM 2.0; qreg q[1]; rz(pi/8) q[0];""")
