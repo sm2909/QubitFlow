@@ -9,7 +9,7 @@ QubitFlow is a discrete-event simulator for studying operation scheduling and lo
 - A stateful scan-row Line-SAM abstraction whose transfer cost is row distance.
 - Dependency-constrained Clifford+T circuit execution.
 - Bounded gate parallelism and finite magic-state buffers/factory throughput.
-- Program-order LRU, fixed-order Belady, DAG-aware scheduling, and conservative prefetch.
+- Program-order LRU and farthest-next-use, DAG-LRU, DAG-aware replacement, transfer arbitration, and bounded speculative prefetch.
 - Independent schedule validation and reproducible CSV experiments.
 
 **Research boundary:** QubitFlow is not a physical surface-code simulator and is not a complete reproduction of LSQCA. It does not simulate stabilizer extraction, lattice-surgery patches, routing geometry, decoding, or factory distillation internals. The Line-SAM implementation is a row-distance abstraction; do not equate it with a full physical implementation.
@@ -25,17 +25,13 @@ python run.py
 python analyze_results.py
 ```
 
-The experiment suite writes `results.csv`. `analyze_results.py` produces per-workload and aggregate comparisons against program-order LRU. GitHub Actions runs tests, smoke, experiments, and analysis, then uploads all three CSV artifacts.
+The experiment suite writes `results.csv`, `experiment_manifest.json`, and representative compressed JSONL event traces in `traces/`. `analyze_results.py` checks matrix completeness and produces matched-configuration, equal-workload, per-workload and workload-class summaries. GitHub Actions uploads the complete evidence package.
 
 ## Circuit import
 
 The OpenQASM 2 importer supports a deliberately restricted subset: quantum/classical register declarations, barriers, terminal measurements, CX, CCX, Clifford/Pauli gates, SX/SXdg, T/Tdg, and exact pi/4-grid RZ rotations. CCX is expanded to a standard Clifford+T decomposition. Off-grid rotations, custom gate definitions, resets, and classically conditioned operations are rejected.
 
-Two QASMBench arithmetic circuits are included under `benchmarks/`:
-- 28-qubit ripple-carry adder.
-- 15-qubit multiplier.
-
-Their upstream license and notice are included alongside the files. See `benchmarks/QASMBENCH_LICENSE` and `benchmarks/QASMBENCH_NOTICE`.
+Four QASMBench arithmetic workloads are included under `benchmarks/`: 15- and 45-qubit multipliers and 28- and 118-qubit adders. Source provenance, upstream gate counts/depths, and redistribution notices are documented in `benchmarks/README.md`. The upstream license and notice are included alongside the files.
 
 The synthetic `qft_topology` generator is only an interaction-topology workload: it does not encode controlled-phase angles or a gate-equivalent QFT decomposition. It must not be described as a functionally exact QFT benchmark.
 
@@ -45,9 +41,9 @@ The synthetic `qft_topology` generator is only an interaction-topology workload:
 |---|---|
 | `lsqca_lazy` | Program-order issue, demand loads, LRU eviction |
 | `fixed_prefetch(W)` | Program-order issue, bounded lookahead prefetch, LRU |
-| `fixed_belady(W)` | Program-order issue, offline farthest-next-use eviction |
+| `fixed_farthest_next_use` | Program-order issue with offline farthest-next-use replacement |
 | `dag_no_prefetch` | DAG-ready operation selection, demand loads, no prefetch |
-| `joint-prefetch(W)` | DAG-ready issue, weighted critical-path priority, DAG-aware eviction, prefetch width W=1/2/4 |
+| `joint-prefetch(W)` | DAG-ready issue, DAG-aware replacement, demand arbitration and bounded in-flight/resident prefetch (W=1/2/4) |
 
 Belady is an offline oracle for fixed-order issue, not a deployable online policy. The joint policy is a heuristic, not an optimizer or proof of optimality.
 
@@ -56,7 +52,8 @@ Belady is an offline oracle for fixed-order issue, not a deployable online polic
 `run.py` runs the same policy set across a fixed-capacity architecture sensitivity matrix:
 - CR slots: 2, 4, 8.
 - SAM banks: 1, 2, 4.
-- SAM capacity per bank: 36 cells, arranged as a 6×6 Line-SAM bank.
+- Total SAM data cells: 144 across every bank-count point (fixed aggregate budget).
+- Near-square bank geometries: one 12×12 bank, two 8×9 banks, or four 6×6 banks.
 - Local Line-SAM access overhead: 0, 1, 2 beats (0 is movement-only lower bound).
 - Separate CNOT-duration sensitivity: 1, 2, 4 beats at CR=4, banks=2, access overhead=1.
 - One transfer lane per bank by default.
