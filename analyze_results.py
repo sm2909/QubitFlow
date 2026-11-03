@@ -110,7 +110,8 @@ def validate_completeness(rows, manifest):
         matched_fields = (
             "workload_tag", "workload_class", "benchmark_source",
             "source_path", "source_sha256", "n_qubits", "n_ops",
-            "cr_slots", "n_banks", "bank_capacity", "bank_width", "bus_lanes",
+            "cr_slots", "n_banks", "bank_capacity", "bank_width", "bank_rows",
+            "total_sam_data_cells", "bus_lanes",
             "line_access_cost", "line_move_per_row", "line_initial_row",
             "t_h", "t_s", "t_pauli", "t_measure", "t_parity_measure",
             "t_t_macro", "t_2q", "magic_factories", "magic_interval", "magic_buffer",
@@ -181,6 +182,8 @@ def main(results_path="results.csv", manifest_path="experiment_manifest.json"):
                 "n_banks": row["n_banks"],
                 "bank_capacity": row["bank_capacity"],
                 "bank_width": row["bank_width"],
+                "bank_rows": row["bank_rows"],
+                "total_sam_data_cells": row["total_sam_data_cells"],
                 "line_access_cost": row["line_access_cost"],
                 "t_2q": row["t_2q"],
             })
