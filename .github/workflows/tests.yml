@@ -29,5 +29,9 @@ jobs:
             results.csv
             workload_summary.csv
             policy_summary.csv
+            workload_geomeans.csv
+            workload_class_summary.csv
             summary.md
+            experiment_manifest.json
+            traces/
           if-no-files-found: error
