@@ -136,6 +136,19 @@ def validate_completeness(rows, manifest):
                         f"unmatched comparison {group} field={field} "
                         f"baseline={baseline[field]} policy={policy}:{row[field]}"
                     )
+            total_cells = int(row["total_sam_data_cells"])
+            if total_cells != int(manifest["total_sam_data_cells"]):
+                raise ValueError(
+                    f"aggregate SAM capacity mismatch in {group}: "
+                    f"expected {manifest['total_sam_data_cells']}, got {total_cells}"
+                )
+            geometry = manifest["bank_geometry_by_bank_count"][str(int(row["n_banks"]))]
+            if (int(row["bank_capacity"]) != int(geometry["bank_capacity"])
+                    or int(row["bank_width"]) != int(geometry["bank_width"])):
+                raise ValueError(
+                    f"bank geometry mismatch in {group}: expected {geometry}, "
+                    f"got capacity={row['bank_capacity']} width={row['bank_width']}"
+                )
     return groups
 
 
@@ -147,7 +160,22 @@ def main(results_path="results.csv", manifest_path="experiment_manifest.json"):
         manifest = json.load(handle)
 
     validate_manifest_hashes(manifest)
+    if len(rows) != int(manifest["row_count"]):
+        raise ValueError(
+            f"results row-count mismatch: manifest={manifest['row_count']} CSV={len(rows)}"
+        )
     groups = validate_completeness(rows, manifest)
+    observed_axis_counts = defaultdict(set)
+    for group in groups:
+        axis = group.split(":", 2)[1]
+        observed_axis_counts[axis].add(group)
+    for axis, expected_count in manifest["expected_policy_group_count"].items():
+        actual_count = len(observed_axis_counts.get(axis, set()))
+        if actual_count != int(expected_count):
+            raise ValueError(
+                f"manifest group count mismatch for {axis}: "
+                f"expected {expected_count}, got {actual_count}"
+            )
     baseline_name = "lsqca-lazy"
     workload_rows = []
     per_workload = defaultdict(lambda: defaultdict(list))
