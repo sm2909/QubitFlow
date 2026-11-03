@@ -130,6 +130,38 @@ class ConfigAndCircuitTests(unittest.TestCase):
         }
         self.assertEqual(len(names), 3)
 
+    def test_joint_prefetch_window_is_persistent_and_overlaps_execution(self):
+        circ = core.Circuit.from_gates(4, [
+            ("h", (0,)), ("h", (1,)), ("cx", (0, 1)),
+            ("cx", (0, 2)), ("cx", (1, 3)),
+        ])
+        cfg = core.ArchConfig(
+            cr_slots=4, n_banks=2, bank_capacity=4, bank_width=1,
+            line_initial_row=0, line_access_cost=1, line_move_per_row=1,
+            timing=core.Timing(t_2q=6),
+        )
+        one, one_result = run_checked(
+            circ, "joint", cfg=cfg, initially_resident=False
+        )
+        two, two_result = run_checked(
+            circ, "joint", cfg=cfg, initially_resident=False
+        )
+        # Use explicit policies: each has the same scheduler and architecture,
+        # differing only in the maximum number of speculative qubits.
+        one_sim = core.Simulator(circ, cfg, make_policy("joint", prefetch_width=1))
+        one_result = one_sim.run()
+        two_sim = core.Simulator(circ, cfg, make_policy("joint", prefetch_width=2))
+        two_result = two_sim.run()
+        self.assertFalse(core.validate_schedule(one_sim.trace, circ, cfg, one_sim.initial_loc))
+        self.assertFalse(core.validate_schedule(two_sim.trace, circ, cfg, two_sim.initial_loc))
+        parent_end = next(e["end"] for e in two_sim.trace
+                          if e["kind"] == "op" and e["id"] == 2)
+        speculative = [e for e in two_sim.trace
+                       if e["kind"] == "load" and e["q"] in (2, 3)]
+        self.assertEqual(len(speculative), 2)
+        self.assertTrue(all(e["start"] < parent_end for e in speculative))
+        self.assertLess(two_result.cycles, one_result.cycles)
+
     def test_line_sam_row_distance(self):
         cfg = core.ArchConfig(
             cr_slots=2, n_banks=1, bank_capacity=16, bank_width=4,
