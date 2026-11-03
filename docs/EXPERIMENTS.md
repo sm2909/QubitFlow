@@ -18,7 +18,7 @@ Compare `dag_next_use_nearest` against `dag_next_use`. Both use the same DAG iss
 
 **RQ4 — Does dependency-frontier prefetch add value?**
 
-Compare `joint-prefetch(W=1/2/4,critical)` against `dag_next_use`. Prefetch targets operands of successor operations whose predecessors have started and at least one predecessor remains in flight. W limits the number of speculative qubits outstanding (in flight or resident); prefetch never evicts a resident qubit.
+Compare `joint-prefetch(W=1/2/4,critical)` against `dag_next_use`. Prefetch targets operands of successor operations whose predecessors have started and at least one predecessor remains in flight. W limits the number of speculative qubits outstanding (in flight or resident). The window uses a per-qubit snapshot of its next unstarted use to detect a later consumer; prefetch never evicts a resident qubit.
 
 **RQ5 — How sensitive are outcomes to architectural assumptions?**
 
