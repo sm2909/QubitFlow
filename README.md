@@ -51,6 +51,8 @@ Farthest-next-use is an offline Belady-inspired baseline for fixed-order issue, 
 
 ## Experiments
 
+The research questions, controlled ablations, workload classes, aggregation rules, and interpretation limits are specified in [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
+
 `run.py` runs the same policy set across a fixed-capacity architecture sensitivity matrix:
 - CR slots: 2, 4, 8.
 - SAM banks: 1, 2, 4.
