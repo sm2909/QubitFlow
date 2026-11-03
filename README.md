@@ -53,7 +53,10 @@ Farthest-next-use is an offline Belady-inspired baseline for fixed-order issue, 
 
 The research questions, controlled ablations, workload classes, aggregation rules, and interpretation limits are specified in [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
 
-`run.py` runs the same policy set across a fixed-capacity architecture sensitivity matrix:
+`run.py` separates broad ablations from the architecture matrix:
+- Four core policies (program-order LRU, DAG-LRU, DAG-farthest-next-use, and joint W=2) run across the full architecture sensitivity matrix.
+- All 13 policy variants (lookahead, replacement, transfer arbitration, prefetch windows) run at one fixed reference configuration: CR=4, two banks, local access overhead=1.
+- The four core policies run in the separate CNOT-duration sensitivity matrix.
 - CR slots: 2, 4, 8.
 - SAM banks: 1, 2, 4.
 - Total SAM data cells: 144 across every bank-count point (fixed aggregate budget).
@@ -62,7 +65,7 @@ The research questions, controlled ablations, workload classes, aggregation rule
 - Separate CNOT-duration sensitivity: 1, 2, 4 beats at CR=4, banks=2, access overhead=1.
 - One transfer lane per bank by default.
 
-Within each workload/configuration group, policy comparisons hold hardware parameters fixed. Changing bank count redistributes the same 144-cell SAM data budget across a different number of near-square banks; total data capacity is held constant. Results include workload provenance, full architecture parameters, policy parameters, Python version, makespan, transfer counts, non-compute cycles, MSF-blocked cycles, logical-cell count, and logical memory-cell fraction.
+Within each matched workload/configuration group, policy comparisons hold hardware parameters fixed. The full 13-policy ablation is paired separately at its fixed reference configuration; do not compare its rows directly to architecture-sensitivity rows. Changing bank count redistributes the same 144-cell SAM data budget across a different number of near-square banks; total data capacity is held constant. Results include workload provenance, full architecture parameters, policy parameters, Python version, makespan, transfer counts, non-compute cycles, MSF-blocked cycles, logical-cell count, and logical memory-cell fraction.
 
 For a policy-only comparison, select one fixed configuration (for example CR=4, banks=2) from the CSV. Do not compare rows with different architecture settings as if only the policy changed.
 
