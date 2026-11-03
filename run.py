@@ -24,6 +24,7 @@ import qf_core as core
 from qf_policies import make_policy
 
 
+# Full policy ablation set, evaluated at one fixed reference architecture.
 POLICIES = [
     ("lsqca_lazy", {}),
     ("fixed_prefetch", {"lookahead": 1}),
@@ -38,6 +39,14 @@ POLICIES = [
     ("joint", {"prefetch_width": 2}),
     ("joint", {"prefetch_width": 4}),
     ("joint", {"prefetch_width": 2, "transfer_priority": "nearest"}),
+]
+
+# Core policies used in both architecture and t_2q sensitivity matrices.
+ARCH_POLICIES = [
+    ("lsqca_lazy", {}),
+    ("dag_lru", {}),
+    ("dag_next_use", {}),
+    ("joint", {"prefetch_width": 2}),
 ]
 
 CIRCUITS = [
@@ -299,7 +308,7 @@ def main():
                 "line_access_cost": access_cost,
             }
             cfg = build_cfg(circuit, point)
-            for policy_name, params in POLICIES:
+            for policy_name, params in ARCH_POLICIES:
                 sim, row = run_one(
                     spec, circuit, cfg, policy_name, params,
                     "architecture_and_access_sensitivity", point,
@@ -322,6 +331,22 @@ def main():
                 row["policy_params"] = "{}"
                 row["comparison_group"] += ":lower-bound"
                 rows.append(row)
+
+        # Full scheduler/replacement/prefetch ablation at one fixed reference
+        # architecture. This keeps ablations paired while avoiding multiplying
+        # the full 13-policy set across every architecture sensitivity point.
+        ablation_point = {
+            "cr_slots": 4,
+            "n_banks": 2,
+            "line_access_cost": 1,
+        }
+        ablation_cfg = build_cfg(circuit, ablation_point)
+        for policy_name, params in POLICIES:
+            _, row = run_one(
+                spec, circuit, ablation_cfg, policy_name, params,
+                "policy_ablation", ablation_point,
+            )
+            rows.append(row)
 
         # Preserve raw traces for a small, pre-registered representative set.
         if spec["tag"] in TRACE_WORKLOADS:
@@ -354,7 +379,7 @@ def main():
                 "timing.t_2q": t_2q,
             }
             cfg = build_cfg(circuit, point)
-            for policy_name, params in POLICIES:
+            for policy_name, params in ARCH_POLICIES:
                 _, row = run_one(
                     spec, circuit, cfg, policy_name, params,
                     "two_qubit_timing_sensitivity", point,
@@ -400,6 +425,23 @@ def main():
             }
             for key, params in POLICIES
         ],
+        "policy_matrices": {
+            "architecture_and_access_sensitivity": [
+                {"key": key, "params": params,
+                 "policy_name": make_policy(key, **params).name}
+                for key, params in ARCH_POLICIES
+            ],
+            "policy_ablation": [
+                {"key": key, "params": params,
+                 "policy_name": make_policy(key, **params).name}
+                for key, params in POLICIES
+            ],
+            "two_qubit_timing_sensitivity": [
+                {"key": key, "params": params,
+                 "policy_name": make_policy(key, **params).name}
+                for key, params in ARCH_POLICIES
+            ],
+        },
         "workloads": [
             {
                 **{k: v for k, v in spec.items() if k != "path"},
@@ -418,6 +460,11 @@ def main():
         "trace_policies": sorted(TRACE_POLICIES),
         "trace_config": TRACE_CONFIG,
         "row_count": len(rows),
+        "expected_policy_group_count": {
+            "architecture_and_access_sensitivity": len(CIRCUITS) * len(ARCH_SWEEP["cr_slots"]) * len(ARCH_SWEEP["n_banks"]) * len(ARCH_SWEEP["line_access_cost"]),
+            "policy_ablation": len(CIRCUITS),
+            "two_qubit_timing_sensitivity": len(CIRCUITS) * len(TWO_QUBIT_TIMINGS),
+        },
     }
     with open("experiment_manifest.json", "w", encoding="utf-8") as handle:
         json.dump(manifest, handle, indent=2, sort_keys=True)
