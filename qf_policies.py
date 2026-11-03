@@ -1,17 +1,22 @@
 """Scheduling policies for QubitFlow.
 
-FixedOrderPolicy supplies program-order LRU and offline Belady baselines.
-JointPolicy is a deterministic DAG-aware heuristic coordinating operation
-selection, CR residency, eviction, demand loading, and conservative prefetch.
-It is not an optimal scheduler.
+The policy families form explicit ablations:
+- fixed-order LRU: no gate reordering, demand paging.
+- DAG-LRU: reorder ready gates, hold the replacement policy fixed.
+- DAG-farthest-next-use: change residency replacement, hold gate ordering fixed.
+- Joint: add dependency-frontier prefetch to DAG scheduling and replacement.
+- nearest-transfer variants: change transfer-request arbitration only.
+
+Farthest-next-use is Belady-inspired. With nonuniform transfer costs and bank
+contention it is not an optimal replacement oracle.
 """
 
 
 class FixedOrderPolicy:
     def __init__(self, lookahead=0, eviction="lru", name=None):
-        if eviction not in ("lru", "belady"):
-            raise ValueError("eviction must be 'lru' or 'belady'")
-        if not isinstance(lookahead, int) or lookahead < 0:
+        if eviction not in ("lru", "farthest_next_use"):
+            raise ValueError("eviction must be 'lru' or 'farthest_next_use'")
+        if not isinstance(lookahead, int) or isinstance(lookahead, bool) or lookahead < 0:
             raise ValueError("lookahead must be a non-negative integer")
         self.lookahead, self.eviction = lookahead, eviction
         self.name = name or f"fixed(W={lookahead},{eviction})"
@@ -23,9 +28,8 @@ class FixedOrderPolicy:
             return None
         if self.eviction == "lru":
             return min(candidates, key=lambda q: (sim.last_used[q], q))
-        # Offline Belady oracle for fixed program-order issue.
-        victim = max(candidates, key=lambda q: (sim.next_use(q), -sim.last_used[q]))
-        return victim
+        # Offline farthest-next-use replacement for the fixed operation order.
+        return max(candidates, key=lambda q: (sim.next_use(q), -sim.last_used[q], -q))
 
     def step(self, sim):
         circuit, n, progress = sim.circuit, len(sim.circuit.ops), False
@@ -46,11 +50,8 @@ class FixedOrderPolicy:
                 if sim.free_slots() > reserve:
                     progress |= sim.try_load(q)
                 elif demand:
-                    # Evict only to satisfy the current head operation. Prefetch
-                    # is opportunistic and must never evict; otherwise Belady
-                    # lookahead can oscillate between future operands.
-                    pending = sim.pending_stores()
-                    if sim.free_slots() + pending >= missing_head:
+                    # Prefetch is opportunistic: never evict solely to prefetch.
+                    if sim.free_slots() + sim.pending_stores() >= missing_head:
                         continue
                     victim = self._victim(sim, protected)
                     if victim is not None:
@@ -59,21 +60,36 @@ class FixedOrderPolicy:
 
 
 class JointPolicy:
-    """Greedy DAG scheduler with weighted critical paths and DAG-aware eviction.
+    """Deterministic DAG-aware scheduler with independently selectable ablations.
 
-    Ready-operation priority is (resident operands, weighted critical path,
-    stable operation ID). For a qubit, next use is estimated from the longest
-    remaining dependency path to each not-yet-started use. Eviction chooses the
-    qubit whose first future use is furthest away, protecting higher-criticality
-    uses on ties. Prefetch is conservative: it is disabled while a ready
-    operation still has nonresident operands, and it never evicts for prefetch.
+    Gate issue ranks dependency-ready operations by resident operand count,
+    duration-weighted critical path, then stable operation ID. Residency uses
+    either LRU or a DAG-aware farthest-next-use estimate. Demand transfers are
+    ordered either by operation criticality or by shortest current row travel.
+    Optional prefetch loads operands for operations whose remaining predecessors
+    are already in flight; it never evicts a resident qubit to prefetch.
     """
 
-    def __init__(self, prefetch=True, prefetch_width=2, name="joint"):
-        if not isinstance(prefetch_width, int) or prefetch_width < 0:
+    def __init__(
+        self,
+        prefetch=False,
+        prefetch_width=0,
+        eviction="lru",
+        transfer_priority="critical",
+        name="dag",
+    ):
+        if not isinstance(prefetch_width, int) or isinstance(prefetch_width, bool) or prefetch_width < 0:
             raise ValueError("prefetch_width must be a non-negative integer")
+        if eviction not in ("lru", "farthest_next_use"):
+            raise ValueError("eviction must be 'lru' or 'farthest_next_use'")
+        if transfer_priority not in ("critical", "nearest"):
+            raise ValueError("transfer_priority must be 'critical' or 'nearest'")
+        if prefetch and prefetch_width == 0:
+            raise ValueError("prefetch requires prefetch_width > 0")
         self.prefetch = bool(prefetch)
         self.prefetch_width = prefetch_width
+        self.eviction = eviction
+        self.transfer_priority = transfer_priority
         self.name = name
 
     def _graph(self, sim):
@@ -94,12 +110,12 @@ class JointPolicy:
             )
 
         remaining_memo = {}
+
         def remaining_path(node):
             if node in sim.finished:
                 return 0
             if node not in remaining_memo:
-                parents = [p for p in sim.circuit.preds[node]
-                           if p not in sim.finished]
+                parents = [p for p in sim.circuit.preds[node] if p not in sim.finished]
                 remaining_memo[node] = durations[node] + max(
                     (remaining_path(parent) for parent in parents), default=0
                 )
@@ -117,7 +133,6 @@ class JointPolicy:
         uses = [i for i in sim.circuit.uses[q] if i not in sim.started]
         if not uses:
             return (float("inf"), 0, float("inf"))
-        # Earliest dependency-feasible future use, not smallest operation ID.
         use = min(uses, key=lambda i: (remaining[i], -critical[i], i))
         return (remaining[use], -critical[use], use)
 
@@ -126,6 +141,8 @@ class JointPolicy:
                       and q not in sim.busy and q not in protected]
         if not candidates:
             return None
+        if self.eviction == "lru":
+            return min(candidates, key=lambda q: (sim.last_used[q], q))
         return max(
             candidates,
             key=lambda q: (
@@ -136,22 +153,37 @@ class JointPolicy:
             ),
         )
 
+    def _transfer_key(self, sim, op_id, q, critical):
+        _, bank, cell = sim.loc[q]
+        latency = sim.cfg.xfer_time(cell, sim.scan_row[bank])
+        if self.transfer_priority == "nearest":
+            return (latency, -critical[op_id], op_id, q)
+        return (-critical[op_id], latency, op_id, q)
+
+    def _prefetch_frontier(self, sim):
+        """Operations blocked only by predecessors already started/in flight."""
+        frontier = []
+        for op_id, parents in enumerate(sim.circuit.preds):
+            if op_id in sim.started or not parents:
+                continue
+            if (any(parent in sim.started and parent not in sim.finished for parent in parents)
+                    and all(parent in sim.started for parent in parents)):
+                frontier.append(op_id)
+        return frontier
+
     def step(self, sim):
         progress = False
         critical, remaining = self._graph(sim)
         ready = sim.ready_ops()
         ranked = sorted(ready, key=lambda i: self._rank(sim, i, critical), reverse=True)
 
-        # Issue all currently executable operations in deterministic priority order.
+        # Issue every currently executable ready operation in priority order.
         for op_id in ranked:
             progress |= sim.try_exec(op_id)
 
-        # Demand-load operands of ready operations before considering prefetch.
+        # Select a priority prefix with a feasible CR operand working set.
         ready = sim.ready_ops()
         ranked = sorted(ready, key=lambda i: self._rank(sim, i, critical), reverse=True)
-        # Select a priority prefix whose unique operands fit in the CR. Do not
-        # simultaneously demand-load mutually incompatible ready operations:
-        # that creates zero-time eviction/load ping-pong when CR is small.
         selected = []
         protected = set()
         for op_id in ranked:
@@ -162,40 +194,45 @@ class JointPolicy:
             if len(protected) == sim.cfg.cr_slots:
                 break
 
-        for op_id in selected:
-            for q in sim.circuit.ops[op_id].qubits:
-                if sim.state(q) != "SAM":
-                    continue
-                if sim.free_slots() == 0:
-                    victim = self._victim(sim, protected, critical, remaining)
-                    if victim is not None:
-                        progress |= sim.try_store(victim)
-                else:
-                    progress |= sim.try_load(q)
+        # Dispatch demand loads in the configured transfer-arbitration order.
+        requests = [
+            (op_id, q)
+            for op_id in selected
+            for q in sim.circuit.ops[op_id].qubits
+            if sim.state(q) == "SAM"
+        ]
+        requests.sort(key=lambda item: self._transfer_key(sim, item[0], item[1], critical))
+        for op_id, q in requests:
+            if sim.free_slots() == 0:
+                victim = self._victim(sim, protected, critical, remaining)
+                if victim is not None:
+                    progress |= sim.try_store(victim)
+            else:
+                progress |= sim.try_load(q)
 
-        # Prefetch only during dependency bubbles, never displacing demand operands.
-        demand_pending = any(
-            any(sim.state(q) != "CR" for q in sim.circuit.ops[i].qubits)
-            for i in ready
-        )
-        if self.prefetch and self.prefetch_width and not demand_pending and not ready:
-            future = [i for i in range(len(sim.circuit.ops))
-                      if i not in sim.started and remaining[i] > 0]
-            future.sort(key=lambda i: (remaining[i], -critical[i], i))
-            count = 0
+        # Prefetch operands for imminent successors of in-flight operations.
+        # This lets transfer latency overlap gate execution without evicting
+        # qubits needed by the currently selected ready-operation prefix.
+        if self.prefetch and self.prefetch_width:
+            frontier = self._prefetch_frontier(sim)
+            frontier.sort(key=lambda i: (remaining[i], -critical[i], i))
+            prefetch_requests = []
             seen_qubits = set()
-            for op_id in future:
+            for op_id in frontier:
                 for q in sim.circuit.ops[op_id].qubits:
-                    if count >= self.prefetch_width or sim.free_slots() <= 0:
-                        break
-                    if q in seen_qubits or sim.state(q) != "SAM":
-                        continue
-                    if sim.try_load(q):
-                        progress = True
-                        count += 1
+                    if q not in seen_qubits and sim.state(q) == "SAM":
+                        prefetch_requests.append((op_id, q))
                         seen_qubits.add(q)
+            prefetch_requests.sort(
+                key=lambda item: self._transfer_key(sim, item[0], item[1], critical)
+            )
+            count = 0
+            for _, q in prefetch_requests:
                 if count >= self.prefetch_width or sim.free_slots() <= 0:
                     break
+                if sim.try_load(q):
+                    progress = True
+                    count += 1
         return progress
 
 
@@ -204,14 +241,22 @@ POLICIES = {
     "fixed_prefetch": lambda lookahead=8, **kw: FixedOrderPolicy(
         lookahead, "lru", f"fixed-prefetch(W={lookahead})"
     ),
-    "fixed_belady": lambda lookahead=8, **kw: FixedOrderPolicy(
-        lookahead, "belady", f"fixed-belady(W={lookahead})"
+    "fixed_farthest_next_use": lambda lookahead=8, **kw: FixedOrderPolicy(
+        lookahead, "farthest_next_use", f"fixed-farthest-next-use(W={lookahead})"
     ),
-    "joint": lambda prefetch=True, prefetch_width=2, **kw: JointPolicy(
-        prefetch, prefetch_width,
-        f"joint-prefetch(W={prefetch_width})" if prefetch else "dag-no-prefetch",
+    "dag_lru": lambda **kw: JointPolicy(
+        False, 0, "lru", "critical", "dag-lru"
     ),
-    "dag_no_prefetch": lambda **kw: JointPolicy(False, 0, "dag-no-prefetch"),
+    "dag_next_use": lambda **kw: JointPolicy(
+        False, 0, "farthest_next_use", "critical", "dag-farthest-next-use"
+    ),
+    "dag_next_use_nearest": lambda **kw: JointPolicy(
+        False, 0, "farthest_next_use", "nearest", "dag-nearest-transfer"
+    ),
+    "joint": lambda prefetch_width=2, transfer_priority="critical", **kw: JointPolicy(
+        True, prefetch_width, "farthest_next_use", transfer_priority,
+        f"joint-prefetch(W={prefetch_width},{transfer_priority})"
+    ),
 }
 
 
