@@ -22,7 +22,7 @@ Compare `joint-prefetch(W=1/2/4,critical)` against `dag_next_use`. Prefetch targ
 
 **RQ5 — How sensitive are outcomes to architectural assumptions?**
 
-The main matrix varies CR slots (2, 4, 8), SAM bank count (1, 2, 4), and Line-SAM local access overhead (0, 1, 2 beats). Total SAM data capacity is fixed at 144 cells across bank counts, using near-square per-bank geometries. A separate two-qubit gate-duration sweep varies `t_2q` (1, 2, 4 beats) at CR=4, two banks, and one-beat local access overhead.
+The architecture matrix runs four core policies (program-order LRU, DAG-LRU, DAG-farthest-next-use, and joint prefetch W=2) while varying CR slots (2, 4, 8), SAM bank count (1, 2, 4), and Line-SAM local access overhead (0, 1, 2 beats). Total SAM data capacity is fixed at 144 cells across bank counts, using near-square per-bank geometries. A separate policy-ablation matrix runs all 13 variants at CR=4, two banks, and one-beat local overhead. A separate two-qubit gate-duration sweep runs the four core policies with `t_2q` (1, 2, 4 beats) at the same reference architecture.
 
 ## Workloads
 
@@ -37,7 +37,7 @@ The QASMBench QASM files, upstream gate-count/depth metadata, license, and notic
 
 ## Controlled factors and grouping
 
-Within each `comparison_group`, every policy sees the same:
+Within each `comparison_group`, every policy in that axis-specific policy matrix sees the same:
 - circuit and imported operation sequence/DAG;
 - CR capacity and SAM bank geometry;
 - bank ports and shared transfer lanes;
@@ -46,7 +46,7 @@ Within each `comparison_group`, every policy sees the same:
 
 The bank-count experiment preserves **total SAM data capacity**, rather than holding per-bank capacity fixed. This avoids confounding extra banks with extra aggregate storage. Per-bank geometry changes with bank count and is included in every CSV row.
 
-The two-qubit timing sensitivity sweep is a separate comparison axis and is not pooled with architecture-sensitivity rows.
+The policy-ablation and two-qubit timing axes use different policy sets and reference configurations; their rows are never pooled with the architecture-sensitivity axis.
 
 ## Metrics
 
@@ -79,7 +79,7 @@ Configuration points within a single circuit are correlated sensitivity settings
 ## Reproducibility artifacts
 
 A successful CI run uploads:
-- `results.csv`: one row per workload/configuration/policy run;
+- `results.csv`: one row per workload/configuration/policy run (1,330 paired rows plus applicable all-CR lower-bound rows);
 - `experiment_manifest.json`: runtime, source revision, policy/configuration matrix, workload metadata, and SHA-256 hashes;
 - `workload_summary.csv`, `workload_geomeans.csv`, `policy_summary.csv`, `workload_class_summary.csv`;
 - `summary.md`: generated result tables and limitations;
