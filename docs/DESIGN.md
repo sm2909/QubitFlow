@@ -50,6 +50,7 @@ The synthetic QFT workload captures a dense controlled-interaction topology only
 
 ## Scheduling policies
 
+- The `lsqca_lazy` label denotes QubitFlow's simple program-order demand-paging LRU reference. It is not a full reproduction of the LSQCA paper's complete compiler/runtime policy.
 - Fixed-order LRU and fixed-order farthest-next-use use program-order issue.
 - Farthest-next-use is an offline Belady-inspired replacement baseline for a fixed sequence. With nonuniform transfer costs and bank contention it is not an optimal replacement oracle.
 - DAG-LRU changes gate ordering while keeping LRU replacement; DAG-farthest-next-use changes replacement while using the same DAG-ready issue heuristic.
