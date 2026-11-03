@@ -515,6 +515,10 @@ class Result:
     bank_capacity: int
     msf_stall_cycles: int
     total_transfer_cycles: int
+    prefetch_loads: int
+    prefetch_uses: int
+    prefetch_evictions: int
+    prefetch_unused: int
 
     def asdict(self):
         return asdict(self)
@@ -557,6 +561,9 @@ class Simulator:
         self.running = []                               # (end, op_id)
         self.xfers = []                                 # dicts: end, kind, q, ...
         self.trace = []
+        # Active speculative loads, keyed by logical qubit. An intent is
+        # consumed by its first gate use or recorded as evicted on store.
+        self.prefetch_origin = {}
         self.ms_stock = cfg.timing.magic_buffer
         self.ms_next = cfg.timing.magic_interval
         self.initial_loc = {}
@@ -623,6 +630,15 @@ class Simulator:
             self.ms_stock -= 1
             self.trace.append(dict(kind="magic_consume", time=self.t, op_id=i))
         end = self.t + cfg.timing.op_duration(op.kind, op.name)
+        for q in op.qubits:
+            origin = self.prefetch_origin.pop(q, None)
+            if origin is not None:
+                self.trace.append(dict(
+                    kind="prefetch_use", time=self.t, q=q,
+                    consumer_op_id=i,
+                    intended_consumer_op_id=origin["consumer_op_id"],
+                    load_start=origin["start"], load_end=origin["end"],
+                ))
         self.started.add(i)
         self._ready_ops.discard(i)
         self.running.append((end, i))
@@ -639,8 +655,14 @@ class Simulator:
                 return k
         return None
 
-    def try_load(self, q, slot=None):
-        """SAM -> CR. Destination slot reserved now; source cell freed on completion."""
+    def try_load(self, q, slot=None, purpose="demand", consumer_op_id=None):
+        """SAM -> CR, recording whether the transfer is demand or speculative."""
+        if purpose not in ("demand", "prefetch"):
+            raise ValueError("load purpose must be 'demand' or 'prefetch'")
+        if purpose == "prefetch":
+            if (not isinstance(consumer_op_id, int) or isinstance(consumer_op_id, bool)
+                    or not 0 <= consumer_op_id < len(self.circuit.ops)):
+                raise ValueError("prefetch loads require a valid consumer_op_id")
         if self.state(q) != "SAM" or q in self.busy:
             return False
         _, b, cell = self.loc[q]
@@ -662,9 +684,16 @@ class Simulator:
         self.port_free[b] = self.lane_free[lane] = end
         self.loc[q] = ("XFER",)
         self.xfers.append(dict(end=end, kind="load", q=q, bank=b, cell=cell, slot=slot))
+        if purpose == "prefetch":
+            self.prefetch_origin[q] = {
+                "consumer_op_id": consumer_op_id,
+                "start": self.t,
+                "end": end,
+            }
         self.trace.append(dict(kind="load", q=q, start=self.t, end=end, bank=b, cell=cell,
                                slot=slot, lane=lane, scan_row_before=self.scan_row[b],
-                               target_row=self.cfg.depth(cell)))
+                               target_row=self.cfg.depth(cell), purpose=purpose,
+                               consumer_op_id=consumer_op_id))
         return True
 
     def try_store(self, q, bank=None, cell=None):
@@ -690,6 +719,12 @@ class Simulator:
         if not cands:
             return False
         cell, b = min(cands)
+        prefetch_origin = self.prefetch_origin.pop(q, None)
+        if prefetch_origin is not None:
+            self.trace.append(dict(
+                kind="prefetch_evict", time=self.t, q=q,
+                consumer_op_id=prefetch_origin["consumer_op_id"],
+            ))
         end = self.t + self.cfg.xfer_time(cell, self.scan_row[b])
         self.cells[b][cell] = q
         self.port_free[b] = self.lane_free[lane] = end
@@ -697,7 +732,8 @@ class Simulator:
         self.xfers.append(dict(end=end, kind="store", q=q, bank=b, cell=cell, slot=slot))
         self.trace.append(dict(kind="store", q=q, start=self.t, end=end, bank=b, cell=cell,
                                slot=slot, lane=lane, scan_row_before=self.scan_row[b],
-                               target_row=self.cfg.depth(cell)))
+                               target_row=self.cfg.depth(cell),
+                               evicted_prefetch=prefetch_origin is not None))
         return True
 
     # ------------------------------------------------------------ engine
@@ -814,13 +850,22 @@ class Simulator:
         stores = sum(e["kind"] == "store" for e in self.trace)
         transfer_cycles = sum(e["end"] - e["start"] for e in self.trace
                               if e["kind"] in ("load", "store"))
+        prefetch_loads = sum(
+            e.get("kind") == "load" and e.get("purpose") == "prefetch"
+            for e in self.trace
+        )
+        prefetch_uses = sum(e.get("kind") == "prefetch_use" for e in self.trace)
+        prefetch_evictions = sum(e.get("kind") == "prefetch_evict" for e in self.trace)
+        prefetch_unused = len(self.prefetch_origin)
         logical_cells = self.cfg.logical_cell_count()
         sam_data_cells = self.cfg.n_banks * self.cfg.bank_capacity
         memory_density = sam_data_cells / logical_cells
         return Result(self.circuit.name, self.policy.name, self.t, loads, stores,
                       loads + stores, busy, self.t - busy, logical_cells,
                       memory_density, self.cfg.cr_slots, self.cfg.n_banks,
-                      self.cfg.bank_capacity, msf_stall_cycles, transfer_cycles)
+                      self.cfg.bank_capacity, msf_stall_cycles, transfer_cycles,
+                      prefetch_loads, prefetch_uses, prefetch_evictions,
+                      prefetch_unused)
 
 # ============================================================================
 # 4. VALIDATE
@@ -844,10 +889,17 @@ def _max_concurrency(ivs):
 def validate_schedule(trace, circuit, cfg, initial_loc):
     """Independently validate operation, placement, transfer, and resource constraints."""
     errs = []
-    known = {"op", "load", "store", "magic_consume", "magic_produce"}
+    known = {
+        "op", "load", "store", "magic_consume", "magic_produce",
+        "prefetch_use", "prefetch_evict",
+    }
     for index, event in enumerate(trace):
         if event.get("kind") not in known:
             errs.append(f"event {index}: unknown kind {event.get('kind')!r}")
+        if event.get("kind") in ("prefetch_use", "prefetch_evict"):
+            if (not isinstance(event.get("time"), (int, float))
+                    or event.get("time") < 0):
+                errs.append(f"event {index}: invalid prefetch lifecycle timestamp")
         if event.get("kind") in ("op", "load", "store"):
             if not isinstance(event.get("start"), (int, float)) or not isinstance(event.get("end"), (int, float)):
                 errs.append(f"event {index}: missing/non-numeric interval")
