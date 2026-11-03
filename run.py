@@ -25,7 +25,7 @@ from qf_policies import make_policy
 
 
 POLICIES = [
-    ("lsqsa_lazy", {}),
+    ("lsqca_lazy", {}),
     ("fixed_prefetch", {"lookahead": 1}),
     ("fixed_prefetch", {"lookahead": 2}),
     ("fixed_prefetch", {"lookahead": 4}),
@@ -113,7 +113,7 @@ TRACE_POLICIES = {
     "dag_lru",
     "dag_next_use",
     "dag_next_use_nearest",
-    "joint",
+    "joint-prefetch(W=2,critical)",
 }
 TRACE_CONFIG = {"cr_slots": 4, "n_banks": 2, "line_access_cost": 1}
 
@@ -151,9 +151,12 @@ def build_cfg(circuit, point):
     return core.ArchConfig(**arch, timing=core.Timing(**timing_overrides))
 
 
-def run_one(spec, circuit, cfg, policy_name, params, axis, point):
+def run_one(spec, circuit, cfg, policy_name, params, axis, point,
+            initially_resident=False):
     policy = make_policy(policy_name, **params)
-    sim = core.Simulator(circuit, cfg, policy)
+    sim = core.Simulator(
+        circuit, cfg, policy, initially_resident=initially_resident
+    )
     result = sim.run().asdict()
     errors = core.validate_schedule(sim.trace, circuit, cfg, sim.initial_loc)
     if errors:
@@ -277,21 +280,11 @@ def main():
 
             # All-qubits-in-CR is a lower-bound reference, not a policy result.
             if circuit.n_qubits <= cr_slots:
-                sim = core.Simulator(
-                    circuit, cfg, make_policy("dag_lru"),
-                    initially_resident=True,
-                )
-                lower_bound = sim.run()
-                errors = core.validate_schedule(
-                    sim.trace, circuit, cfg, sim.initial_loc
-                )
-                if errors:
-                    raise AssertionError(f"invalid all-CR trace: {errors[:10]}")
                 _, row = run_one(
                     spec, circuit, cfg, "dag_lru", {},
                     "architecture_and_access_sensitivity", point,
+                    initially_resident=True,
                 )
-                row.update(lower_bound.asdict())
                 row["policy"] = "all_qubits_in_CR_lower_bound"
                 row["policy_params"] = "{}"
                 row["comparison_group"] += ":lower-bound"
