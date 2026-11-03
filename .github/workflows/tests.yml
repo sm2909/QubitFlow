@@ -1,10 +1,12 @@
 name: tests
 on:
   push:
-    branches: [main, "implement-qf-foundation-and-joint-scheduler"]
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 concurrency:
-  group: qubitflow-ci-${{ github.ref }}
+  group: qubitflow-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
   unittest:
