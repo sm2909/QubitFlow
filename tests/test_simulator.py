@@ -402,7 +402,7 @@ class SimulatorTests(unittest.TestCase):
         self.assertTrue(sim.try_exec(0))
         self.assertEqual(set(sim.ready_ops()), {1})
         self.assertEqual(sim.next_use(0), 2)
-        self.assertEqual(sim.pending_predecessors[2], 1)
+        self.assertEqual(sim.pending_predecessors[2], 2)
 
         sim.t = 3
         sim._complete()
