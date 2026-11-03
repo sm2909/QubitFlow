@@ -97,7 +97,9 @@ class JointPolicy:
         # Qubits in this set were loaded speculatively and remain counted
         # against the configured window until the first consuming op starts.
         self.prefetched_qubits = set()
-        self._prefetched_started = {}
+        # Snapshot each speculative qubit's next unstarted consumer. The
+        # simulator's per-qubit cursor advances only when a consuming gate starts.
+        self._prefetched_next_use = {}
         self._critical = None
         self._depth = None
 
@@ -134,22 +136,18 @@ class JointPolicy:
         return (resident, critical[op_id], -op_id)
 
     def _refresh_prefetch_window(self, sim):
-        """Release speculative slots only after a post-prefetch consumer starts."""
+        """Release slots after a post-prefetch consumer starts or qubit is evicted."""
         consumed = {
-            q for q, started_at_prefetch in self._prefetched_started.items()
-            if any(
-                op_id not in started_at_prefetch
-                and q in sim.circuit.ops[op_id].qubits
-                for op_id in sim.started
-            )
+            q for q, expected_next_use in self._prefetched_next_use.items()
+            if sim.next_use(q) != expected_next_use
         }
         self.prefetched_qubits = {
             q for q in self.prefetched_qubits
             if q not in consumed and sim.state(q) in ("XFER", "CR")
         }
-        self._prefetched_started = {
-            q: started_at_prefetch
-            for q, started_at_prefetch in self._prefetched_started.items()
+        self._prefetched_next_use = {
+            q: expected_next_use
+            for q, expected_next_use in self._prefetched_next_use.items()
             if q in self.prefetched_qubits
         }
 
@@ -186,15 +184,20 @@ class JointPolicy:
         return (-critical[op_id], latency, op_id, q)
 
     def _prefetch_frontier(self, sim):
-        """Operations blocked only by predecessors already started/in flight."""
-        frontier = []
-        for op_id, parents in enumerate(sim.circuit.preds):
-            if op_id in sim.started or not parents:
-                continue
-            if (any(parent in sim.started and parent not in sim.finished for parent in parents)
-                    and all(parent in sim.started for parent in parents)):
-                frontier.append(op_id)
-        return frontier
+        """Unstarted successors of in-flight ops whose every predecessor started.
+
+        Iterate only the successors of currently running operations rather than
+        scanning the full circuit on every scheduling decision.
+        """
+        frontier = set()
+        for _, parent in sim.running:
+            for op_id in sim.successors[parent]:
+                if op_id in sim.started:
+                    continue
+                parents = sim.circuit.preds[op_id]
+                if all(pred in sim.started for pred in parents):
+                    frontier.add(op_id)
+        return sorted(frontier)
 
     def step(self, sim):
         progress = False
@@ -263,7 +266,7 @@ class JointPolicy:
                     progress = True
                     count += 1
                     self.prefetched_qubits.add(q)
-                    self._prefetched_started[q] = frozenset(sim.started)
+                    self._prefetched_next_use[q] = sim.next_use(q)
         return progress
 
 
