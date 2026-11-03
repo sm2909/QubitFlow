@@ -26,7 +26,7 @@ A T gate consumes one buffered magic state. The aggregate factory model produces
 
 ## SAM and transfer model
 
-The default experiment uses 36 data cells per bank with `bank_width=6` (a 6×6 logical-cell array); this square geometry is a modelling choice consistent with the LSQCA paper's near-square bank layouts, not a physical floorplan reproduction. The default `sam_model="line"` models one scan-row position per bank. A transfer to a cell in row `r` takes:
+The default experiment fixes aggregate SAM data capacity at 144 cells and varies bank count while preserving that capacity: one 12×12 bank, two 8×9 banks, or four 6×6 banks. These near-square logical geometries are modelling choices, not physical floorplan reproductions. The default `sam_model="line"` models one scan-row position per bank. A transfer to a cell in row `r` takes:
 
 `line_access_cost + line_move_per_row * abs(r - current_scan_row)`
 
@@ -55,7 +55,7 @@ The synthetic QFT workload captures a dense controlled-interaction topology only
 - The joint policy selects among DAG-ready operations using weighted critical-path priority, demand-loads their operands, and evicts based on a DAG-aware estimate of the longest remaining dependency path to the next use.
 - Prefetch is conservative: it is disabled while ready operations still need demand operands and never evicts a resident qubit to prefetch.
 
-The joint policy is evaluated at prefetch widths W=1/2/4. It remains a deterministic heuristic. Its DAG-aware next-use estimate is not an optimal register-allocation algorithm.
+The joint policy is evaluated at prefetch widths W=1/2/4. The window limit is persistent across scheduler iterations: an in-flight or resident prefetched qubit consumes a window slot until its first consumer starts or it is evicted. It remains a deterministic heuristic. Its DAG-aware next-use estimate is not an optimal register-allocation algorithm.
 
 ## Metrics
 
@@ -69,7 +69,7 @@ The joint policy is evaluated at prefetch widths W=1/2/4. It remains a determini
 
 ## Fair comparisons
 
-The experiment harness evaluates CR slots 2/4/8, bank counts 1/2/4, and local Line-SAM access overhead 0/1/2 beats using a fixed 36-cell (6×6) bank. A separate CNOT-duration sensitivity sweep evaluates t_2q = 1/2/4 beats at CR=4, two banks, and one-beat local access overhead. Policy speedups are computed only within identical workload/configuration groups.
+The experiment harness evaluates CR slots 2/4/8, bank counts 1/2/4 at a fixed aggregate capacity of 144 SAM data cells, and local Line-SAM access overhead 0/1/2 beats. Per-bank geometry is kept near-square while aggregate data-cell capacity remains constant. A separate CNOT-duration sensitivity sweep evaluates t_2q = 1/2/4 beats at CR=4, two banks, and one-beat local access overhead. Policy speedups are computed only within identical workload/configuration groups.
 
 - Policy comparisons must hold CR size, bank count/capacity, bank width, bus lanes, code distance, gate timings, factory count/rate/buffer, and workload fixed.
 - Architecture sensitivity varies one or more explicit hardware parameters and must be reported separately.
@@ -79,4 +79,4 @@ The experiment harness evaluates CR slots 2/4/8, bank counts 1/2/4, and local Li
 
 ## Benchmark provenance
 
-The included 28-qubit adder and 15-qubit multiplier are from PNNL QASMBench. Their original QASM files are retained under `benchmarks/`; the upstream license and notice are included in the same directory. The importer expands CCX using a standard Clifford+T decomposition. The decomposition and importer are covered by unit tests.
+The included 15- and 45-qubit multipliers and 28- and 118-qubit adders are from PNNL QASMBench. Their original QASM files are retained under `benchmarks/`; the upstream license and notice are included in the same directory. The importer expands CCX using a standard Clifford+T decomposition. The decomposition and importer are covered by unit tests.
