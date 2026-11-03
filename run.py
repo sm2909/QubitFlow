@@ -361,7 +361,10 @@ def main():
         "schema_version": 1,
         "run_started_utc": run_started,
         "run_finished_utc": datetime.now(timezone.utc).isoformat(),
-        "source_revision": os.environ.get("GITHUB_SHA", "unknown"),
+        "source_revision": os.environ.get(
+            "QF_SOURCE_REVISION", os.environ.get("GITHUB_SHA", "unknown")
+        ),
+        "ci_checkout_revision": os.environ.get("GITHUB_SHA", "unknown"),
         "python_version": sys.version,
         "platform": platform.platform(),
         "architecture_base": ARCH_BASE,
