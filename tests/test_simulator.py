@@ -158,15 +158,39 @@ class ConfigAndCircuitTests(unittest.TestCase):
         # Operation 0 started before q0 was speculatively loaded for op1.
         sim.started.add(0)
         policy.prefetched_qubits.add(0)
-        policy._prefetched_started[0] = frozenset(sim.started)
+        policy._prefetched_next_use[0] = sim.next_use(0)
+        self.assertEqual(policy._prefetched_next_use[0], 1)
         policy._refresh_prefetch_window(sim)
         self.assertIn(0, policy.prefetched_qubits)
 
-        # Once a new consumer starts after prefetch, the slot is released.
+        # Once a new consumer starts after prefetch, the per-qubit cursor moves
+        # to the following use (or INF), releasing the outstanding slot.
         sim.started.add(1)
+        sim.next_use(0)
         policy._refresh_prefetch_window(sim)
         self.assertNotIn(0, policy.prefetched_qubits)
-        self.assertNotIn(0, policy._prefetched_started)
+        self.assertNotIn(0, policy._prefetched_next_use)
+
+    def test_prefetch_frontier_only_visits_inflight_successors(self):
+        circ = core.Circuit.from_gates(3, [
+            ("h", (0,)),      # 0
+            ("h", (1,)),      # 1
+            ("cx", (0, 1)),   # 2 depends on 0 and 1
+            ("t", (0,)),      # 3 depends on 2
+            ("h", (2,)),      # 4 independent
+        ])
+        cfg = core.ArchConfig(
+            cr_slots=3, n_banks=1, bank_capacity=3, bank_width=1,
+        )
+        sim = core.Simulator(
+            circ, cfg, make_policy("joint", prefetch_width=1),
+            initially_resident=True,
+        )
+        sim.started.update({0, 1})
+        sim.finished.add(0)
+        sim.running.append((5, 1))
+        self.assertEqual(sim.policy._prefetch_frontier(sim), [2])
+
 
     def test_joint_prefetch_window_is_persistent_and_overlaps_execution(self):
         circ = core.Circuit.from_gates(4, [
