@@ -6,10 +6,11 @@ Edit EXPERIMENT; everything else is plumbing.
 """
 import argparse, csv, itertools, json, math
 import qf_core as core
+import qf_workloads as wl
 from qf_policies import make_policy
 
 EXPERIMENT = {
-    # ---- workloads: kind in {adder, random, qasm, mqt}
+    # ---- workloads: kind in {adder, multiplier, qft, parallel_adders, random, qasm, mqt}
     "circuits": [
         {"kind": "adder", "n": 8},
         {"kind": "random", "n": 40, "ops": 400, "seed": 0},
@@ -18,26 +19,21 @@ EXPERIMENT = {
     ],
     # ---- base architecture (any ArchConfig field). bank_capacity=None -> smallest that fits.
     "arch": {"d": 11, "cr_slots": 8, "n_banks": 2, "bank_capacity": None, "bus_lanes": 1,
-             "bank_width": 8, "max_parallel_ops": 4},
+             "bank_width": 4, "max_parallel_ops": 4, "sam_model": "line"},
     # ---- timing overrides (any Timing field), e.g. {"xfer_per_depth": 2, "t_T": 3}
-    "timing": {},
+    "timing": {},                 # e.g. {"magic_unlimited": True}; paper preset: see experiments.make_arch
     # ---- cartesian sweep over any arch/timing field; key prefix "timing." for Timing fields
     "sweep": {"cr_slots": [4, 8, 12], "n_banks": [1, 2]},
     # ---- (policy name, params) from qf_policies.POLICIES
-    "policies": [("lsqca_lazy", {}), ("fixed_prefetch", {"lookahead": 8}),
-                 ("fixed_belady", {"lookahead": 8})],
+    "policies": [("demand_lru", {}), ("demand_belady", {}), ("prefetch_lru", {"lookahead": 8}),
+                 ("prefetch_belady", {"lookahead": 8}), ("dag", {"prefetch_window": 4})],
     "validate": True,
     "csv": "results.csv",          # or None
 }
 
 
 def build_circuit(c):
-    k = c["kind"]
-    if k == "adder":  return core.adder(c["n"])
-    if k == "random": return core.random_circuit(c["n"], c["ops"], seed=c.get("seed", 0))
-    if k == "qasm":   return core.from_qasm(c["path"])
-    if k == "mqt":    return core.from_mqt_bench(c["name"], c["n"])
-    raise ValueError(k)
+    return wl.build_workload(c)       # adder|multiplier|qft|parallel_adders|random(seed required)|qasm|mqt
 
 
 def build_cfg(circ, arch, timing, point):
@@ -68,10 +64,14 @@ def run(exp, validate=True):
                     errs = core.validate_schedule(sim.trace, circ, cfg, sim.initial_loc)
                     assert not errs, f"INVALID schedule ({sim.policy.name}, {point}): {errs[:5]}"
                 res.update(point)
+                res.update(circuit_fp=circ.fingerprint(), arch_fp=cfg.fingerprint(), n_ops=len(circ.ops),
+                           seed=cspec.get("seed", ""), policy_params=json.dumps(sim.policy.spec, sort_keys=True),
+                           bank_width=cfg.bank_width, magic_interval=cfg.timing.magic_interval,
+                           magic_unlimited=cfg.timing.magic_unlimited, schedule_hash=core.trace_hash(sim.trace))
                 rows.append(res)
                 print(f"  {str(point):42s} {res['policy']:24s} cycles={res['cycles']:7d} "
                       f"xfers={res['transfers']:6d} wait={res['mem_wait_cycles']:6d} "
-                      f"phys={res['physical_qubits']}")
+                      f"msf_stall={res['msf_stall_cycles']:6d} phys={res['physical_qubits']}")
     if exp.get("csv") and rows:
         cols = list(dict.fromkeys(k for r in rows for k in r))
         with open(exp["csv"], "w", newline="") as f:

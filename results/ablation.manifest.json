@@ -1,0 +1,42 @@
+{
+  "environment": {
+    "git_commit": "cf2e612f662144fab97897f64a9c87b2352f66f3",
+    "git_dirty": false,
+    "packages": {
+      "numpy": "2.4.4",
+      "qiskit": "2.6.1"
+    },
+    "platform": "Linux-6.18.44-fc-v230-x86_64-with-glibc2.39",
+    "python": "3.12.3"
+  },
+  "n_runs": 190,
+  "notes": "every run executed twice (hash-checked) and validated; no wall-clock data in CSV",
+  "quick": false,
+  "sam_model": "line",
+  "suite": "ablation",
+  "timing_preset": "Timing.lsqca_paper",
+  "workloads": {
+    "adder_large": {
+      "kind": "adder",
+      "n": 16
+    },
+    "adder_small": {
+      "kind": "adder",
+      "n": 4
+    },
+    "high_parallel": {
+      "k": 6,
+      "kind": "parallel_adders",
+      "n": 4
+    },
+    "multiplier": {
+      "kind": "multiplier",
+      "n": 5
+    },
+    "qft": {
+      "kind": "qft",
+      "max_k": 6,
+      "n": 16
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "environment": {
+    "git_commit": "cf2e612f662144fab97897f64a9c87b2352f66f3",
+    "git_dirty": false,
+    "packages": {
+      "numpy": "2.4.4",
+      "qiskit": "2.6.1"
+    },
+    "platform": "Linux-6.18.44-fc-v230-x86_64-with-glibc2.39",
+    "python": "3.12.3"
+  },
+  "n_runs": 30,
+  "notes": "every run executed twice (hash-checked) and validated; no wall-clock data in CSV",
+  "quick": false,
+  "sam_model": "line",
+  "suite": "seeds",
+  "timing_preset": "Timing.lsqca_paper",
+  "workloads": "see CSV"
+}

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qubitflow"
+version = "0.2.0"
+description = "Cycle-level simulator and scheduler testbed for load/store fault-tolerant quantum architectures (LSQCA-style Line-SAM)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+analysis = ["numpy>=1.24", "pandas>=2.0", "matplotlib>=3.7"]
+qiskit = ["qiskit>=1.0"]
+test = ["pytest>=7", "numpy>=1.24"]
+
+[tool.setuptools]
+py-modules = ["qf_core", "qf_policies", "qf_workloads", "experiments", "analyze", "run", "smoke"]

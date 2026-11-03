@@ -1,0 +1,6 @@
+numpy>=1.24
+pandas>=2.0
+matplotlib>=3.7
+qiskit>=1.0   # optional: only for from_qiskit/from_qasm
+pytest>=7
+# optional: mqt.bench (from_mqt_bench)
