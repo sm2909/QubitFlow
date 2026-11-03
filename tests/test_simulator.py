@@ -245,10 +245,56 @@ class ConfigAndCircuitTests(unittest.TestCase):
         parent_end = next(e["end"] for e in two_sim.trace
                           if e["kind"] == "op" and e["id"] == 2)
         speculative = [e for e in two_sim.trace
-                       if e["kind"] == "load" and e["q"] in (2, 3)]
+                       if e["kind"] == "load" and e.get("purpose") == "prefetch"
+                       and e["q"] in (2, 3)]
         self.assertEqual(len(speculative), 2)
         self.assertTrue(all(e["start"] < parent_end for e in speculative))
+        uses = [e for e in two_sim.trace if e["kind"] == "prefetch_use"]
+        evictions = [e for e in two_sim.trace if e["kind"] == "prefetch_evict"]
+        self.assertGreaterEqual(len(uses), 1)
+        self.assertEqual(two_result.prefetch_loads, len(speculative))
+        self.assertEqual(two_result.prefetch_uses, len(uses))
+        self.assertEqual(two_result.prefetch_evictions, len(evictions))
+        self.assertEqual(
+            two_result.prefetch_loads,
+            two_result.prefetch_uses
+            + two_result.prefetch_evictions
+            + two_result.prefetch_unused,
+        )
+        self.assertTrue(all(
+            use["consumer_op_id"] == use["intended_consumer_op_id"]
+            for use in uses
+        ))
         self.assertLess(two_result.cycles, one_result.cycles)
+
+    def test_fixed_order_prefetch_is_annotated_and_accounted(self):
+        circ = core.Circuit.from_gates(3, [
+            ("h", (0,)),
+            ("cx", (0, 1)),
+            ("cx", (1, 2)),
+        ])
+        cfg = core.ArchConfig(
+            cr_slots=2,
+            n_banks=2,
+            bank_capacity=2,
+            bank_width=1,
+            line_initial_row=0,
+            line_access_cost=1,
+        )
+        sim, result = run_checked(
+            circ, "fixed_prefetch", cfg=cfg,
+            initially_resident=False,
+        )
+        speculative = [
+            e for e in sim.trace
+            if e["kind"] == "load" and e.get("purpose") == "prefetch"
+        ]
+        self.assertGreaterEqual(len(speculative), 0)
+        self.assertEqual(result.prefetch_loads, len(speculative))
+        self.assertEqual(
+            result.prefetch_loads,
+            result.prefetch_uses + result.prefetch_evictions + result.prefetch_unused,
+        )
 
     def test_line_sam_row_distance(self):
         cfg = core.ArchConfig(
