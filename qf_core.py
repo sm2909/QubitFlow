@@ -997,14 +997,23 @@ def validate_schedule(trace, circuit, cfg, initial_loc):
     magic_events = [e for e in trace if e.get("kind") in ("magic_produce", "magic_consume")]
     production_by_time = {}
     consumption_by_time = {}
-    max_magic_time = 0
+    # Factory ticks occur even while the buffer is full. Use the complete trace
+    # makespan to enumerate every tick; absent production events are valid only
+    # when the reconstructed buffer is full at that tick.
+    schedule_end = max(
+        [0]
+        + [e.get("end", 0) for e in trace
+           if e.get("kind") in ("op", "load", "store")
+           and isinstance(e.get("end"), (int, float))]
+        + [e.get("time", 0) for e in magic_events
+           if isinstance(e.get("time"), (int, float))]
+    )
     for event in magic_events:
         time = event.get("time")
         if (not isinstance(time, (int, float)) or isinstance(time, bool)
                 or not math.isfinite(time) or time < 0):
             errs.append("magic-state event has invalid timestamp")
             continue
-        max_magic_time = max(max_magic_time, time)
         if event["kind"] == "magic_produce":
             count = event.get("count")
             if not isinstance(count, int) or isinstance(count, bool) or not 0 < count <= cfg.timing.magic_factories:
@@ -1015,7 +1024,7 @@ def validate_schedule(trace, circuit, cfg, initial_loc):
             consumption_by_time.setdefault(time, []).append(event)
 
     expected_ticks = set(range(cfg.timing.magic_interval,
-                               int(max_magic_time) + 1,
+                               int(schedule_end) + 1,
                                cfg.timing.magic_interval))
     for time in production_by_time:
         if time not in expected_ticks:
