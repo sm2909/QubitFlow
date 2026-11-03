@@ -352,7 +352,7 @@ def main():
     tracked_files = [
         "qf_core.py", "qf_policies.py", "run.py", "analyze_results.py",
         "smoke.py", "tests/test_simulator.py",
-        "README.md", "docs/DESIGN.md", "benchmarks/README.md",
+        "README.md", "docs/DESIGN.md", "docs/EXPERIMENTS.md", "benchmarks/README.md",
         ".github/workflows/tests.yml",
         "benchmarks/QASMBENCH_LICENSE", "benchmarks/QASMBENCH_NOTICE",
         *[spec["path"] for spec in CIRCUITS if spec.get("path")],
