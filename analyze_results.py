@@ -216,6 +216,18 @@ def main(results_path="results.csv", manifest_path="experiment_manifest.json"):
                 "transfer_delta_vs_lru": transfer_delta,
                 "loads": row["loads"],
                 "stores": row["stores"],
+                "prefetch_loads": row["prefetch_loads"],
+                "prefetch_uses": row["prefetch_uses"],
+                "prefetch_evictions": row["prefetch_evictions"],
+                "prefetch_unused": row["prefetch_unused"],
+                "prefetch_use_rate": (
+                    int(row["prefetch_uses"]) / int(row["prefetch_loads"])
+                    if int(row["prefetch_loads"]) else 0.0
+                ),
+                "prefetch_eviction_rate": (
+                    int(row["prefetch_evictions"]) / int(row["prefetch_loads"])
+                    if int(row["prefetch_loads"]) else 0.0
+                ),
                 "exec_busy_cycles": row["exec_busy_cycles"],
                 "non_exec_cycles": row["non_exec_cycles"],
                 "msf_stall_cycles": row["msf_stall_cycles"],
@@ -255,6 +267,45 @@ def main(results_path="results.csv", manifest_path="experiment_manifest.json"):
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         writer.writerows(workload_geos)
+
+    prefetch_rows = []
+    for (group, policies) in sorted(groups.items()):
+        if not group.startswith(tuple(
+            f"{workload['tag']}:policy_ablation" for workload in manifest["workloads"]
+        )):
+            continue
+        for policy, row in sorted(policies.items()):
+            loads = int(row["prefetch_loads"])
+            uses = int(row["prefetch_uses"])
+            evictions = int(row["prefetch_evictions"])
+            outstanding = int(row["prefetch_unused"])
+            if loads != uses + evictions + outstanding:
+                raise ValueError(
+                    f"prefetch lifecycle mismatch in {group}/{policy}: "
+                    f"loads={loads}, uses={uses}, evictions={evictions}, "
+                    f"outstanding={outstanding}"
+                )
+            prefetch_rows.append({
+                "workload_tag": row["workload_tag"],
+                "policy": policy,
+                "cycles": row["cycles"],
+                "transfers": row["transfers"],
+                "prefetch_loads": loads,
+                "prefetch_uses": uses,
+                "prefetch_evictions": evictions,
+                "prefetch_outstanding_at_end": outstanding,
+                "use_rate": f"{uses / loads:.6f}" if loads else "0.000000",
+                "eviction_rate": f"{evictions / loads:.6f}" if loads else "0.000000",
+            })
+    with open("prefetch_summary.csv", "w", newline="", encoding="utf-8") as handle:
+        fields = list(prefetch_rows[0]) if prefetch_rows else [
+            "workload_tag", "policy", "cycles", "transfers", "prefetch_loads",
+            "prefetch_uses", "prefetch_evictions", "prefetch_outstanding_at_end",
+            "use_rate", "eviction_rate",
+        ]
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(prefetch_rows)
 
     policy_summary = []
     summary_by_axis = {}
@@ -380,6 +431,26 @@ def main(results_path="results.csv", manifest_path="experiment_manifest.json"):
         lines.append(
             f"| {r['experiment_axis']} | {r['workload_class']} | {r['policy']} "
             f"| {float(r['equal_workload_geomean_speedup']):.4f}x | {r['workloads']} |"
+        )
+
+    prefetch_by_workload = [
+        row for row in prefetch_rows
+        if row["policy"].startswith("joint-prefetch")
+        or row["policy"].startswith("fixed-prefetch")
+    ]
+    lines += [
+        "",
+        "## Prefetch lifecycle (fixed reference architecture)",
+        "",
+        "| Workload | Policy | Cycles | Transfers | Prefetch loads | Used | Evicted | Outstanding | Use rate |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for row in prefetch_by_workload:
+        lines.append(
+            f"| {row['workload_tag']} | {row['policy']} | {row['cycles']} "
+            f"| {row['transfers']} | {row['prefetch_loads']} "
+            f"| {row['prefetch_uses']} | {row['prefetch_evictions']} "
+            f"| {row['prefetch_outstanding_at_end']} | {float(row['use_rate']):.1%} |"
         )
 
     lines += [
