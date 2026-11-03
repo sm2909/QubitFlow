@@ -326,6 +326,26 @@ class SimulatorTests(unittest.TestCase):
             set(range(len(circ.ops))),
         )
 
+    def test_dag_scheduler_reorders_ready_ops_by_critical_path(self):
+        circ = core.Circuit.from_gates(3, [
+            ("cx", (0, 2)), ("h", (1,)), ("t", (1,)), ("cx", (1, 0))
+        ])
+        cfg = core.ArchConfig(
+            cr_slots=2, n_banks=2, bank_capacity=3, bank_width=1,
+            line_initial_row=0, line_access_cost=1,
+            timing=core.Timing(t_2q=1),
+        )
+        dag, _ = run_checked(circ, "dag_lru", cfg=cfg)
+        fixed, _ = run_checked(circ, "lsqca_lazy", cfg=cfg)
+        dag_starts = {
+            e["id"]: e["start"] for e in dag.trace if e["kind"] == "op"
+        }
+        fixed_starts = {
+            e["id"]: e["start"] for e in fixed.trace if e["kind"] == "op"
+        }
+        self.assertLess(dag_starts[1], dag_starts[0])
+        self.assertLess(fixed_starts[0], fixed_starts[1])
+
     def test_dag_dependencies_after_reordering(self):
         circ = core.Circuit.from_gates(2, [
             ("h", (0,)), ("x", (1,)), ("t", (0,)), ("cx", (0, 1))
