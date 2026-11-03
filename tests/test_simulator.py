@@ -171,6 +171,37 @@ class ConfigAndCircuitTests(unittest.TestCase):
         self.assertNotIn(0, policy.prefetched_qubits)
         self.assertNotIn(0, policy._prefetched_next_use)
 
+    def test_prefetch_is_not_retried_after_eviction_for_same_consumer(self):
+        circ = core.Circuit.from_gates(2, [
+            ("h", (0,)),
+            ("h", (1,)),
+            ("cx", (0, 1)),
+            ("t", (0,)),
+        ])
+        cfg = core.ArchConfig(
+            cr_slots=2, n_banks=2, bank_capacity=2, bank_width=1,
+            line_initial_row=0, line_access_cost=0,
+        )
+        sim = core.Simulator(circ, cfg, make_policy("joint", prefetch_width=1))
+        policy = sim.policy
+        # Model operation 0 completed and operation 1 in flight; q0 has been
+        # speculatively loaded for the imminent op2 and then evicted.
+        sim.started.update({0, 1})
+        sim.finished.add(0)
+        sim.running.append((5, 1))
+        expected_use = sim.next_use(0)
+        self.assertEqual(expected_use, 2)
+        policy._prefetch_attempted_for[0] = expected_use
+        policy._refresh_prefetch_window(sim)
+        self.assertFalse(policy._prefetch_allowed(sim, 0))
+        self.assertEqual(policy._prefetch_frontier(sim), [2])
+
+        # Once op2 starts, the cursor advances and the next-use suppression clears.
+        sim.started.add(2)
+        sim.next_use(0)
+        policy._refresh_prefetch_window(sim)
+        self.assertTrue(policy._prefetch_allowed(sim, 0))
+
     def test_prefetch_frontier_only_visits_inflight_successors(self):
         circ = core.Circuit.from_gates(3, [
             ("h", (0,)),      # 0
