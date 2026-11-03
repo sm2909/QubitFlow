@@ -1000,11 +1000,14 @@ def validate_schedule(trace, circuit, cfg, initial_loc):
     # Factory ticks occur even while the buffer is full. Use the complete trace
     # makespan to enumerate every tick; absent production events are valid only
     # when the reconstructed buffer is full at that tick.
-    schedule_end = max(
+    # _tick() runs at the start of each scheduler iteration and immediately
+    # before a T-gate start. The last processed factory tick is therefore bounded
+    # by the latest scheduled event start, not the makespan/end timestamp.
+    processed_through = max(
         [0]
-        + [e.get("end", 0) for e in trace
+        + [e.get("start", 0) for e in trace
            if e.get("kind") in ("op", "load", "store")
-           and isinstance(e.get("end"), (int, float))]
+           and isinstance(e.get("start"), (int, float))]
         + [e.get("time", 0) for e in magic_events
            if isinstance(e.get("time"), (int, float))]
     )
@@ -1024,7 +1027,7 @@ def validate_schedule(trace, circuit, cfg, initial_loc):
             consumption_by_time.setdefault(time, []).append(event)
 
     expected_ticks = set(range(cfg.timing.magic_interval,
-                               int(schedule_end) + 1,
+                               int(processed_through) + 1,
                                cfg.timing.magic_interval))
     for time in production_by_time:
         if time not in expected_ticks:
@@ -1034,8 +1037,11 @@ def validate_schedule(trace, circuit, cfg, initial_loc):
     all_times = sorted(expected_ticks | set(consumption_by_time) | set(production_by_time))
     consumed_ids = []
     for time in all_times:
-        expected = min(cfg.timing.magic_factories,
-                       max(0, cfg.timing.magic_buffer - stock))
+        expected = (
+            min(cfg.timing.magic_factories,
+                max(0, cfg.timing.magic_buffer - stock))
+            if time in expected_ticks else 0
+        )
         actual = production_by_time.get(time, 0)
         if actual != expected:
             errs.append(
