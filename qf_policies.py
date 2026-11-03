@@ -11,6 +11,8 @@ Farthest-next-use is Belady-inspired. With nonuniform transfer costs and bank
 contention it is not an optimal replacement oracle.
 """
 
+from qf_core import INF
+
 
 class FixedOrderPolicy:
     def __init__(self, lookahead=0, eviction="lru", name=None):
