@@ -191,6 +191,12 @@ class Circuit:
                 raise ValueError("operation IDs must be contiguous and match list positions")
             if op.kind not in {"1q", "2q", "T", "meas"} or op.name not in _SUPPORTED_GATES:
                 raise ValueError(f"unsupported operation at op {i}: {op.name!r} ({op.kind})")
+            expected_kind = _KIND.get(op.name, "1q")
+            if op.kind != expected_kind:
+                raise ValueError(
+                    f"operation kind mismatch at op {i}: gate {op.name!r} "
+                    f"must have kind {expected_kind!r}, not {op.kind!r}"
+                )
             arity = 2 if op.kind == "2q" else 1
             if len(op.qubits) != arity or len(set(op.qubits)) != arity:
                 raise ValueError(f"op {i} must have {arity} distinct operand(s)")
