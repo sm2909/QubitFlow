@@ -801,6 +801,10 @@ class Simulator:
                     frozenset(self.started), frozenset(self.finished),
                     tuple(self.port_free), tuple(self.lane_free), tuple(self.scan_row),
                     tuple(self.last_used), self.ms_stock, self.ms_next,
+                    tuple(sorted(
+                        (q, v["consumer_op_id"], v["start"], v["end"])
+                        for q, v in self.prefetch_origin.items()
+                    )),
                 )
                 if signature in seen_policy_states:
                     raise DeadlockError(
@@ -857,6 +861,12 @@ class Simulator:
         prefetch_uses = sum(e.get("kind") == "prefetch_use" for e in self.trace)
         prefetch_evictions = sum(e.get("kind") == "prefetch_evict" for e in self.trace)
         prefetch_unused = len(self.prefetch_origin)
+        if prefetch_loads != prefetch_uses + prefetch_evictions + prefetch_unused:
+            raise AssertionError(
+                "prefetch lifecycle accounting mismatch: "
+                f"loads={prefetch_loads}, uses={prefetch_uses}, "
+                f"evictions={prefetch_evictions}, outstanding={prefetch_unused}"
+            )
         logical_cells = self.cfg.logical_cell_count()
         sam_data_cells = self.cfg.n_banks * self.cfg.bank_capacity
         memory_density = sam_data_cells / logical_cells
@@ -1065,6 +1075,74 @@ def validate_schedule(trace, circuit, cfg, initial_loc):
         errs.append("bus-lane limit exceeded")
     if _max_concurrency([(e["start"], e["end"]) for e in op_events]) > cfg.max_parallel_ops:
         errs.append("parallel-operation limit exceeded")
+
+    # Validate speculative-load provenance and exactly one terminal outcome
+    # per completed prefetch: useful first use, eviction, or still outstanding at
+    # the end of the trace.
+    open_prefetch = {}
+    prefetch_load_events = [
+        e for e in trace
+        if e.get("kind") == "load" and e.get("purpose") == "prefetch"
+    ]
+    for event in prefetch_load_events:
+        q = event.get("q")
+        consumer = event.get("consumer_op_id")
+        if (not isinstance(q, int) or isinstance(q, bool)
+                or not 0 <= q < circuit.n_qubits
+                or not isinstance(consumer, int) or isinstance(consumer, bool)
+                or not 0 <= consumer < len(circuit.ops)):
+            errs.append("prefetch load has invalid qubit or intended consumer")
+            continue
+        if q not in circuit.ops[consumer].qubits:
+            errs.append("prefetch load's intended consumer does not use the qubit")
+        if (consumer in seen
+                and event.get("end", INF) > seen[consumer].get("start", -INF)):
+            errs.append("prefetch load completes after its intended consumer starts")
+        key = (q, consumer)
+        open_prefetch.setdefault(key, []).append(event)
+
+    for event in trace:
+        kind = event.get("kind")
+        if kind not in ("prefetch_use", "prefetch_evict"):
+            continue
+        q = event.get("q")
+        intended = event.get(
+            "intended_consumer_op_id"
+        ) if kind == "prefetch_use" else event.get("consumer_op_id")
+        key = (q, intended)
+        candidates = open_prefetch.get(key, [])
+        if not candidates:
+            errs.append(f"{kind} has no matching speculative load for q{q}")
+            continue
+        load = candidates.pop(0)
+        if kind == "prefetch_use":
+            consumer = event.get("consumer_op_id")
+            op_event = seen.get(consumer)
+            if (op_event is None or op_event.get("start") != event.get("time")
+                    or q not in circuit.ops[consumer].qubits
+                    or consumer != intended):
+                errs.append("prefetch-use event does not match the first intended consumer")
+            if (load.get("start") != event.get("load_start")
+                    or load.get("end") != event.get("load_end")):
+                errs.append("prefetch-use event does not match its load interval")
+        else:
+            matching_store = any(
+                store.get("kind") == "store"
+                and store.get("q") == q
+                and store.get("start") == event.get("time")
+                and store.get("evicted_prefetch") is True
+                for store in trace
+            )
+            if not matching_store:
+                errs.append("prefetch-eviction event has no matching eviction store")
+            if event.get("time", -INF) < load.get("end", INF):
+                errs.append("prefetch was evicted before its load completed")
+
+    for key, outstanding in open_prefetch.items():
+        # At most one speculative intent per qubit/consumer is expected, but
+        # repeated fixed-lookahead attempts can occur after a prior eviction.
+        if len(outstanding) > 1:
+            errs.append(f"multiple unresolved prefetch loads for q{key[0]} consumer {key[1]}")
 
     # Reconstruct the exact aggregate factory inventory. Every factory tick
     # emits min(factory_count, available_buffer_slots); no catch-up production
