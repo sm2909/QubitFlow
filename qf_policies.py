@@ -131,6 +131,26 @@ class JointPolicy:
         resident = sum(sim.state(q) == "CR" for q in op.qubits)
         return (resident, critical[op_id], -op_id)
 
+    def _refresh_prefetch_window(self, sim):
+        """Release speculative slots only after a post-prefetch consumer starts."""
+        consumed = {
+            q for q, started_at_prefetch in self._prefetched_started.items()
+            if any(
+                op_id not in started_at_prefetch
+                and q in sim.circuit.ops[op_id].qubits
+                for op_id in sim.started
+            )
+        }
+        self.prefetched_qubits = {
+            q for q in self.prefetched_qubits
+            if q not in consumed and sim.state(q) in ("XFER", "CR")
+        }
+        self._prefetched_started = {
+            q: started_at_prefetch
+            for q, started_at_prefetch in self._prefetched_started.items()
+            if q in self.prefetched_qubits
+        }
+
     def _next_use_key(self, sim, q, critical, depth):
         use = sim.next_use(q)
         if use == INF:
@@ -176,26 +196,7 @@ class JointPolicy:
 
     def step(self, sim):
         progress = False
-        # A speculative load consumes a window slot while in flight or resident.
-        # Release the slot only after a consumer starts or the qubit leaves CR/SAM
-        # due to an eviction/transfer decision.
-        consumed = {
-            q for q, started_at_prefetch in self._prefetched_started.items()
-            if any(
-                op_id not in started_at_prefetch
-                and q in sim.circuit.ops[op_id].qubits
-                for op_id in sim.started
-            )
-        }
-        self.prefetched_qubits = {
-            q for q in self.prefetched_qubits
-            if q not in consumed and sim.state(q) in ("XFER", "CR")
-        }
-        self._prefetched_started = {
-            q: started_at_prefetch
-            for q, started_at_prefetch in self._prefetched_started.items()
-            if q in self.prefetched_qubits
-        }
+        self._refresh_prefetch_window(sim)
         critical, depth = self._graph(sim)
         ready = sim.ready_ops()
         ranked = sorted(ready, key=lambda i: self._rank(sim, i, critical), reverse=True)
