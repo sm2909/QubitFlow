@@ -268,10 +268,9 @@ class ConfigAndCircuitTests(unittest.TestCase):
         self.assertLess(two_result.cycles, one_result.cycles)
 
     def test_fixed_order_prefetch_is_annotated_and_accounted(self):
-        circ = core.Circuit.from_gates(3, [
+        circ = core.Circuit.from_gates(2, [
             ("h", (0,)),
             ("cx", (0, 1)),
-            ("cx", (1, 2)),
         ])
         cfg = core.ArchConfig(
             cr_slots=2,
@@ -289,7 +288,8 @@ class ConfigAndCircuitTests(unittest.TestCase):
             e for e in sim.trace
             if e["kind"] == "load" and e.get("purpose") == "prefetch"
         ]
-        self.assertGreaterEqual(len(speculative), 0)
+        self.assertGreater(len(speculative), 0)
+        self.assertTrue(any(e["kind"] == "prefetch_use" for e in sim.trace))
         self.assertEqual(result.prefetch_loads, len(speculative))
         self.assertEqual(
             result.prefetch_loads,
