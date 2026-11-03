@@ -373,16 +373,16 @@ class ConfigAndCircuitTests(unittest.TestCase):
     def test_vendor_qasmbench_circuits_import(self):
         root = Path(__file__).resolve().parents[1] / "benchmarks"
         expected = {
-            "qasmb_adder_n28.qasm": 28,
-            "qasmb_multiplier_n15.qasm": 15,
-            "qasmb_adder_n118.qasm": 118,
-            "qasmb_multiplier_n45.qasm": 45,
+            "qasmb_adder_n28.qasm": (28, 644),
+            "qasmb_multiplier_n15.qasm": (15, 651),
+            "qasmb_adder_n118.qasm": (118, 2784),
+            "qasmb_multiplier_n45.qasm": (45, 6286),
         }
-        for filename, qubits in expected.items():
+        for filename, (qubits, imported_ops) in expected.items():
             with self.subTest(filename=filename):
                 circuit = core.from_qasm(str(root / filename))
                 self.assertEqual(circuit.n_qubits, qubits)
-                self.assertGreater(len(circuit.ops), 0)
+                self.assertEqual(len(circuit.ops), imported_ops)
                 self.assertGreater(sum(op.kind == "2q" for op in circuit.ops), 0)
                 self.assertNotIn("ccx", {op.name for op in circuit.ops})
 
