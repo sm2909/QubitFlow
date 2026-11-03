@@ -541,6 +541,18 @@ class Simulator:
         self.busy = set()                               # qubits inside a running op
         self.last_used = [0] * circuit.n_qubits
         self.started, self.finished = set(), set()
+        # Incremental DAG-ready frontier avoids scanning the full circuit at
+        # every scheduling decision on large workloads.
+        self.successors = [[] for _ in circuit.ops]
+        self.pending_predecessors = [len(parents) for parents in circuit.preds]
+        for node, parents in enumerate(circuit.preds):
+            for parent in parents:
+                self.successors[parent].append(node)
+        self._ready_ops = {
+            node for node, pending in enumerate(self.pending_predecessors)
+            if pending == 0
+        }
+        self._next_use_cursor = [0] * circuit.n_qubits
         self._head = 0
         self.running = []                               # (end, op_id)
         self.xfers = []                                 # dicts: end, kind, q, ...
@@ -580,14 +592,17 @@ class Simulator:
         return self._head
 
     def next_use(self, q):
-        """Lowest-ID not-yet-started use; valid even when operations start out of order."""
-        return next((i for i in self.circuit.uses[q] if i not in self.started), INF)
+        """Next unstarted use in this qubit's dependency-preserved order."""
+        uses = self.circuit.uses[q]
+        pos = self._next_use_cursor[q]
+        while pos < len(uses) and uses[pos] in self.started:
+            pos += 1
+        self._next_use_cursor[q] = pos
+        return uses[pos] if pos < len(uses) else INF
 
     def ready_ops(self):
-        """All dependency-ready operations that have not yet started."""
-        return [i for i in range(len(self.circuit.ops))
-                if i not in self.started
-                and all(pred in self.finished for pred in self.circuit.preds[i])]
+        """Current dependency-ready frontier, maintained incrementally."""
+        return list(self._ready_ops)
 
     # ------------------------------------------------------------ actions
     def try_exec(self, i):
@@ -595,7 +610,7 @@ class Simulator:
         if not isinstance(i, int) or not 0 <= i < len(c.ops):
             return False
         op = c.ops[i]
-        if i in self.started or any(p not in self.finished for p in c.preds[i]):
+        if i not in self._ready_ops:
             return False
         if len(self.running) >= cfg.max_parallel_ops:
             return False
@@ -608,9 +623,13 @@ class Simulator:
             self.ms_stock -= 1
             self.trace.append(dict(kind="magic_consume", time=self.t, op_id=i))
         end = self.t + cfg.timing.op_duration(op.kind, op.name)
-        self.started.add(i); self.running.append((end, i)); self.busy.update(op.qubits)
+        self.started.add(i)
+        self._ready_ops.discard(i)
+        self.running.append((end, i))
+        self.busy.update(op.qubits)
         for q in op.qubits:
             self.last_used[q] = self.t
+            self.next_use(q)
         self.trace.append(dict(kind="op", id=i, start=self.t, end=end, qubits=op.qubits))
         return True
 
@@ -698,8 +717,13 @@ class Simulator:
 
     def _complete(self):
         for e, i in [r for r in self.running if r[0] <= self.t]:
-            self.running.remove((e, i)); self.finished.add(i)
+            self.running.remove((e, i))
+            self.finished.add(i)
             self.busy.difference_update(self.circuit.ops[i].qubits)
+            for successor in self.successors[i]:
+                self.pending_predecessors[successor] -= 1
+                if self.pending_predecessors[successor] == 0:
+                    self._ready_ops.add(successor)
         for x in [x for x in self.xfers if x["end"] <= self.t]:
             self.xfers.remove(x); q = x["q"]
             self.scan_row[x["bank"]] = self.cfg.depth(x["cell"])
