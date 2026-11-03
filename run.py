@@ -210,7 +210,10 @@ def run_one(spec, circuit, cfg, policy_name, params, axis, point,
         "magic_buffer": cfg.timing.magic_buffer,
         "policy_params": json.dumps(params, sort_keys=True),
         "python_version": platform.python_version(),
-        "source_revision": os.environ.get("GITHUB_SHA", "unknown"),
+        "source_revision": os.environ.get(
+            "QF_SOURCE_REVISION", os.environ.get("GITHUB_SHA", "unknown")
+        ),
+        "ci_checkout_revision": os.environ.get("GITHUB_SHA", "unknown"),
     }
     row["comparison_group"] = (
         f"{spec['tag']}:{axis}:CR{cfg.cr_slots}:B{cfg.n_banks}:"
@@ -348,6 +351,10 @@ def main():
 
     tracked_files = [
         "qf_core.py", "qf_policies.py", "run.py", "analyze_results.py",
+        "smoke.py", "tests/test_simulator.py",
+        "README.md", "docs/DESIGN.md", "benchmarks/README.md",
+        ".github/workflows/tests.yml",
+        "benchmarks/QASMBENCH_LICENSE", "benchmarks/QASMBENCH_NOTICE",
         *[spec["path"] for spec in CIRCUITS if spec.get("path")],
     ]
     manifest = {
