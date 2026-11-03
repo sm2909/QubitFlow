@@ -6,6 +6,7 @@ Aggregate summaries report both matched-configuration and equal-workload weighti
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import math
 import statistics
@@ -29,6 +30,50 @@ def load_rows(path):
         return list(csv.DictReader(handle))
 
 
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def expected_comparison_groups(manifest):
+    workloads = manifest["workloads"]
+    groups = set()
+    for workload in workloads:
+        tag = workload["tag"]
+        for cr_slots in manifest["architecture_sweep"]["cr_slots"]:
+            for n_banks in manifest["architecture_sweep"]["n_banks"]:
+                for access_cost in manifest["architecture_sweep"]["line_access_cost"]:
+                    t_2q = manifest["architecture_base"].get("t_2q", 1)
+                    groups.add(
+                        f"{tag}:architecture_and_access_sensitivity:"
+                        f"CR{cr_slots}:B{n_banks}:access{access_cost}:t2q{t_2q}"
+                    )
+        for t_2q in manifest["two_qubit_timing_sweep"]:
+            groups.add(
+                f"{tag}:two_qubit_timing_sensitivity:"
+                f"CR4:B2:access1:t2q{t_2q}"
+            )
+    return groups
+
+
+def validate_manifest_hashes(manifest):
+    mismatches = []
+    for path, expected in manifest.get("code_and_input_sha256", {}).items():
+        if not Path(path).is_file():
+            mismatches.append(f"manifest file missing: {path}")
+        else:
+            actual = sha256_file(path)
+            if actual != expected:
+                mismatches.append(
+                    f"SHA-256 mismatch for {path}: expected {expected}, got {actual}"
+                )
+    if mismatches:
+        raise ValueError("manifest integrity check failed: " + "; ".join(mismatches[:10]))
+
+
 def validate_completeness(rows, manifest):
     expected = {
         make_policy(item["key"], **item["params"]).name
@@ -44,6 +89,16 @@ def validate_completeness(rows, manifest):
             raise ValueError(f"duplicate row for group={group} policy={policy}")
         groups[group][policy] = row
 
+    expected_groups = expected_comparison_groups(manifest)
+    observed_groups = set(groups)
+    missing_groups = sorted(expected_groups - observed_groups)
+    extra_groups = sorted(observed_groups - expected_groups)
+    if missing_groups or extra_groups:
+        raise ValueError(
+            f"incomplete/extra experiment groups: missing={missing_groups[:12]}, "
+            f"extra={extra_groups[:12]} (missing={len(missing_groups)}, extra={len(extra_groups)})"
+        )
+
     for group, observed in groups.items():
         missing = sorted(expected - set(observed))
         extra = sorted(set(observed) - expected)
@@ -53,7 +108,8 @@ def validate_completeness(rows, manifest):
             )
         baseline = observed["lsqca-lazy"]
         matched_fields = (
-            "workload_tag", "workload_class", "n_qubits", "n_ops",
+            "workload_tag", "workload_class", "benchmark_source",
+            "source_path", "source_sha256", "n_qubits", "n_ops",
             "cr_slots", "n_banks", "bank_capacity", "bank_width", "bus_lanes",
             "line_access_cost", "line_move_per_row", "line_initial_row",
             "t_h", "t_s", "t_pauli", "t_measure", "t_parity_measure",
@@ -76,6 +132,7 @@ def main(results_path="results.csv", manifest_path="experiment_manifest.json"):
     with open(manifest_path, encoding="utf-8") as handle:
         manifest = json.load(handle)
 
+    validate_manifest_hashes(manifest)
     groups = validate_completeness(rows, manifest)
     baseline_name = "lsqca-lazy"
     workload_rows = []
