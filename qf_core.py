@@ -1080,6 +1080,9 @@ def validate_schedule(trace, circuit, cfg, initial_loc):
     # per completed prefetch: useful first use, eviction, or still outstanding at
     # the end of the trace.
     open_prefetch = {}
+    for event in trace:
+        if event.get("kind") == "load" and event.get("purpose") not in ("demand", "prefetch"):
+            errs.append("load event has missing or invalid purpose metadata")
     prefetch_load_events = [
         e for e in trace
         if e.get("kind") == "load" and e.get("purpose") == "prefetch"
@@ -1117,8 +1120,13 @@ def validate_schedule(trace, circuit, cfg, initial_loc):
         load = candidates.pop(0)
         if kind == "prefetch_use":
             consumer = event.get("consumer_op_id")
-            op_event = seen.get(consumer)
-            if (op_event is None or op_event.get("start") != event.get("time")
+            valid_consumer = (
+                isinstance(consumer, int) and not isinstance(consumer, bool)
+                and 0 <= consumer < len(circuit.ops)
+            )
+            op_event = seen.get(consumer) if valid_consumer else None
+            if (not valid_consumer or op_event is None
+                    or op_event.get("start") != event.get("time")
                     or q not in circuit.ops[consumer].qubits
                     or consumer != intended):
                 errs.append("prefetch-use event does not match the first intended consumer")
