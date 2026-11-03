@@ -101,6 +101,12 @@ ARCH_BASE = {
     "line_move_per_row": 1,
     "line_initial_row": 0,
 }
+TOTAL_SAM_CELLS = 144
+BANK_GEOMETRY = {
+    1: {"bank_capacity": 144, "bank_width": 12},
+    2: {"bank_capacity": 72, "bank_width": 9},
+    4: {"bank_capacity": 36, "bank_width": 6},
+}
 ARCH_SWEEP = {
     "cr_slots": [2, 4, 8],
     "n_banks": [1, 2, 4],
@@ -109,10 +115,10 @@ ARCH_SWEEP = {
 TWO_QUBIT_TIMINGS = [1, 2, 4]
 TRACE_WORKLOADS = {"qasmb_adder_n28", "qasmb_multiplier_n15"}
 TRACE_POLICIES = {
-    "lsqsa_lazy",
-    "dag_lru",
-    "dag_next_use",
-    "dag_next_use_nearest",
+    "lsqca-lazy",
+    "dag-lru",
+    "dag-farthest-next-use",
+    "dag-nearest-transfer",
     "joint-prefetch(W=2,critical)",
 }
 TRACE_CONFIG = {"cr_slots": 4, "n_banks": 2, "line_access_cost": 1}
@@ -146,6 +152,11 @@ def build_cfg(circuit, point):
         if key.startswith("timing.")
     }
     arch.update({k: v for k, v in point.items() if not k.startswith("timing.")})
+    # Hold total SAM data capacity fixed while varying bank count. The bank
+    # geometries are near-square and make bank parallelism independently visible.
+    arch.update(BANK_GEOMETRY[arch["n_banks"]])
+    if arch["n_banks"] * arch["bank_capacity"] != TOTAL_SAM_CELLS:
+        raise AssertionError("bank geometry does not preserve total SAM capacity")
     if (circuit.n_qubits + arch["n_banks"] - 1) // arch["n_banks"] > arch["bank_capacity"]:
         raise ValueError("selected architecture has insufficient aggregate SAM capacity")
     return core.ArchConfig(**arch, timing=core.Timing(**timing_overrides))
@@ -348,9 +359,18 @@ def main():
         "python_version": sys.version,
         "platform": platform.platform(),
         "architecture_base": ARCH_BASE,
+        "total_sam_data_cells": TOTAL_SAM_CELLS,
+        "bank_geometry_by_bank_count": BANK_GEOMETRY,
         "architecture_sweep": ARCH_SWEEP,
         "two_qubit_timing_sweep": TWO_QUBIT_TIMINGS,
-        "policies": [{"key": key, "params": params} for key, params in POLICIES],
+        "policies": [
+            {
+                "key": key,
+                "params": params,
+                "policy_name": make_policy(key, **params).name,
+            }
+            for key, params in POLICIES
+        ],
         "workloads": [
             {
                 **{k: v for k, v in spec.items() if k != "path"},
