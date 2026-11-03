@@ -1009,7 +1009,7 @@ def validate_schedule(trace, circuit, cfg, initial_loc):
             consumption_by_time.setdefault(time, []).append(event)
 
     expected_ticks = set(range(cfg.timing.magic_interval,
-                               int(max_magic_time) + cfg.timing.magic_interval,
+                               int(max_magic_time) + 1,
                                cfg.timing.magic_interval))
     for time in production_by_time:
         if time not in expected_ticks:
