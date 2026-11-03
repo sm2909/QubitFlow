@@ -25,7 +25,7 @@ python run.py
 python analyze_results.py
 ```
 
-The experiment suite writes `results.csv`, `experiment_manifest.json`, and representative compressed JSONL event traces in `traces/`. `analyze_results.py` checks matrix completeness and produces matched-configuration, equal-workload, per-workload and workload-class summaries. GitHub Actions uploads the complete evidence package.
+The experiment suite writes `results.csv`, `experiment_manifest.json`, `prefetch_summary.csv` (speculative loads, successful first uses, evictions, and outstanding intents), and representative compressed JSONL event traces in `traces/`. `analyze_results.py` checks matrix completeness and produces matched-configuration, equal-workload, per-workload and workload-class summaries. GitHub Actions uploads the complete evidence package.
 
 ## Circuit import
 
@@ -65,7 +65,7 @@ The research questions, controlled ablations, workload classes, aggregation rule
 - Separate CNOT-duration sensitivity: 1, 2, 4 beats at CR=4, banks=2, access overhead=1.
 - One transfer lane per bank by default.
 
-Within each matched workload/configuration group, policy comparisons hold hardware parameters fixed. The full 13-policy ablation is paired separately at its fixed reference configuration; do not compare its rows directly to architecture-sensitivity rows. Changing bank count redistributes the same 144-cell SAM data budget across a different number of near-square banks; total data capacity is held constant. Results include workload provenance, full architecture parameters, policy parameters, Python version, makespan, transfer counts, non-compute cycles, MSF-blocked cycles, logical-cell count, and logical memory-cell fraction.
+Within each matched workload/configuration group, policy comparisons hold hardware parameters fixed. The full 13-policy ablation is paired separately at its fixed reference configuration; do not compare its rows directly to architecture-sensitivity rows. Changing bank count redistributes the same 144-cell SAM data budget across a different number of near-square banks; total data capacity is held constant. Results include workload provenance, full architecture parameters, policy parameters, Python version, makespan, demand/speculative load counts, prefetch use/eviction outcomes, transfer counts, non-compute cycles, MSF-blocked cycles, logical-cell count, and logical memory-cell fraction.
 
 For a policy-only comparison, select one fixed configuration (for example CR=4, banks=2) from the CSV. Do not compare rows with different architecture settings as if only the policy changed.
 
