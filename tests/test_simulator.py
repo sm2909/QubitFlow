@@ -384,6 +384,7 @@ class ConfigAndCircuitTests(unittest.TestCase):
                 self.assertEqual(circuit.n_qubits, qubits)
                 self.assertGreater(len(circuit.ops), 0)
                 self.assertGreater(sum(op.kind == "2q" for op in circuit.ops), 0)
+                self.assertNotIn("ccx", {op.name for op in circuit.ops})
 
 
 class SimulatorTests(unittest.TestCase):
