@@ -50,12 +50,13 @@ The synthetic QFT workload captures a dense controlled-interaction topology only
 
 ## Scheduling policies
 
-- Fixed-order LRU and fixed-order Belady issue in program order.
-- Belady uses exact next operation ID for a fixed sequence and is an offline oracle baseline.
-- The joint policy selects among DAG-ready operations using weighted critical-path priority, demand-loads their operands, and evicts based on a DAG-aware estimate of the longest remaining dependency path to the next use.
-- Prefetch is conservative: it is disabled while ready operations still need demand operands and never evicts a resident qubit to prefetch.
+- Fixed-order LRU and fixed-order farthest-next-use use program-order issue.
+- Farthest-next-use is an offline Belady-inspired replacement baseline for a fixed sequence. With nonuniform transfer costs and bank contention it is not an optimal replacement oracle.
+- DAG-LRU changes gate ordering while keeping LRU replacement; DAG-farthest-next-use changes replacement while using the same DAG-ready issue heuristic.
+- The nearest-transfer variant changes only demand-transfer ordering from critical-path priority to shortest current scan-row travel.
+- Joint scheduling combines DAG-ready operation selection, farthest-next-use residency, critical-path demand-transfer ordering, and dependency-frontier prefetch.
 
-The joint policy is evaluated at prefetch widths W=1/2/4. The window limit is persistent across scheduler iterations: an in-flight or resident prefetched qubit consumes a window slot until its first consumer starts or it is evicted. It remains a deterministic heuristic. Its DAG-aware next-use estimate is not an optimal register-allocation algorithm.
+The joint policy is evaluated at prefetch widths W=1/2/4. W is a persistent maximum number of speculative qubits outstanding (in transfer or resident): the slot is released after a consumer starts or the prefetched qubit is evicted. The nearest-transfer joint variant changes only arbitration. These are deterministic heuristics, not optimal schedulers.
 
 ## Metrics
 
@@ -69,7 +70,7 @@ The joint policy is evaluated at prefetch widths W=1/2/4. The window limit is pe
 
 ## Fair comparisons
 
-The experiment harness evaluates CR slots 2/4/8, bank counts 1/2/4 at a fixed aggregate capacity of 144 SAM data cells, and local Line-SAM access overhead 0/1/2 beats. Per-bank geometry is kept near-square while aggregate data-cell capacity remains constant. A separate CNOT-duration sensitivity sweep evaluates t_2q = 1/2/4 beats at CR=4, two banks, and one-beat local access overhead. Policy speedups are computed only within identical workload/configuration groups.
+The experiment harness evaluates CR slots 2/4/8, bank counts 1/2/4 at a fixed aggregate capacity of 144 SAM data cells, and local Line-SAM access overhead 0/1/2 beats. Per-bank geometry is kept near-square while aggregate data-cell capacity remains constant. A separate CNOT-duration sensitivity sweep evaluates t_2q = 1/2/4 beats at CR=4, two banks, and one-beat local access overhead. It evaluates 10 workloads: four QASMBench arithmetic circuits, two synthetic adders, one topology-only QFT stress test, and three random stress seeds. Policy speedups are computed only within identical workload/configuration groups; the analyzer verifies the complete expected matrix and recorded file hashes.
 
 - Policy comparisons must hold CR size, bank count/capacity, bank width, bus lanes, code distance, gate timings, factory count/rate/buffer, and workload fixed.
 - Architecture sensitivity varies one or more explicit hardware parameters and must be reported separately.
@@ -79,4 +80,4 @@ The experiment harness evaluates CR slots 2/4/8, bank counts 1/2/4 at a fixed ag
 
 ## Benchmark provenance
 
-The included 15- and 45-qubit multipliers and 28- and 118-qubit adders are from PNNL QASMBench. Their original QASM files are retained under `benchmarks/`; the upstream license and notice are included in the same directory. The importer expands CCX using a standard Clifford+T decomposition. The decomposition and importer are covered by unit tests.
+The included 15- and 45-qubit multipliers and 28- and 118-qubit adders are from PNNL QASMBench. Their transpiled OpenQASM 2 files are retained under `benchmarks/`; the upstream license and notice are included in the same directory. The importer expands CCX using a standard Clifford+T decomposition, SX into H-S-H, and exact pi/4-grid RZ rotations to Clifford+T. It rejects off-grid rotations and unsupported dynamic control flow. The Toffoli decomposition and two-bit Cuccaro adder are checked on every computational-basis input by a small exact statevector test; this is a targeted semantic regression, not a complete verifier for the vendor benchmarks.
