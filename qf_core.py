@@ -984,37 +984,67 @@ def validate_schedule(trace, circuit, cfg, initial_loc):
     if _max_concurrency([(e["start"], e["end"]) for e in op_events]) > cfg.max_parallel_ops:
         errs.append("parallel-operation limit exceeded")
 
-    # Verify magic-state inventory using explicit production/consumption events.
+    # Reconstruct the exact aggregate factory inventory. Every factory tick
+    # emits min(factory_count, available_buffer_slots); no catch-up production
+    # is allowed after a full buffer. Production is processed before consumption
+    # at the same timestamp, matching Simulator._tick().
     magic_events = [e for e in trace if e.get("kind") in ("magic_produce", "magic_consume")]
-    stock = cfg.timing.magic_buffer
-    ordered_magic = sorted(magic_events,
-                           key=lambda e: (e["time"], 0 if e["kind"] == "magic_produce" else 1))
-    for event in ordered_magic:
+    production_by_time = {}
+    consumption_by_time = {}
+    max_magic_time = 0
+    for event in magic_events:
+        time = event.get("time")
+        if (not isinstance(time, (int, float)) or isinstance(time, bool)
+                or not math.isfinite(time) or time < 0):
+            errs.append("magic-state event has invalid timestamp")
+            continue
+        max_magic_time = max(max_magic_time, time)
         if event["kind"] == "magic_produce":
             count = event.get("count")
-            if not isinstance(count, int) or not 0 < count <= cfg.timing.magic_factories:
+            if not isinstance(count, int) or isinstance(count, bool) or not 0 < count <= cfg.timing.magic_factories:
                 errs.append("invalid magic-state production count")
                 continue
-            if not isinstance(event.get("time"), (int, float)) or event["time"] <= 0:
-                errs.append("magic-state production has invalid timestamp")
-            elif event["time"] % cfg.timing.magic_interval != 0:
-                errs.append("magic-state production is off factory cadence")
-            stock += count
-            if stock > cfg.timing.magic_buffer:
-                errs.append("magic-state buffer overflow")
+            production_by_time[time] = production_by_time.get(time, 0) + count
         else:
+            consumption_by_time.setdefault(time, []).append(event)
+
+    expected_ticks = set(range(cfg.timing.magic_interval,
+                               int(max_magic_time) + cfg.timing.magic_interval,
+                               cfg.timing.magic_interval))
+    for time in production_by_time:
+        if time not in expected_ticks:
+            errs.append(f"magic-state production is off factory cadence at t={time}")
+
+    stock = cfg.timing.magic_buffer
+    all_times = sorted(expected_ticks | set(consumption_by_time) | set(production_by_time))
+    consumed_ids = []
+    for time in all_times:
+        expected = min(cfg.timing.magic_factories,
+                       max(0, cfg.timing.magic_buffer - stock))
+        actual = production_by_time.get(time, 0)
+        if actual != expected:
+            errs.append(
+                f"magic-state production mismatch at t={time}: expected {expected}, got {actual}"
+            )
+        stock += actual
+        if stock > cfg.timing.magic_buffer:
+            errs.append(f"magic-state buffer overflow at t={time}")
+
+        for event in consumption_by_time.get(time, []):
             op_id = event.get("op_id")
             op_event = seen.get(op_id)
-            if op_event is None or op_event.get("start") != event.get("time"):
-                errs.append("magic-state consumption does not coincide with a T-gate start")
-            elif circuit.ops[op_id].kind != "T":
-                errs.append("magic-state consumption references a non-T operation")
+            if (op_event is None or op_event.get("start") != time
+                    or not isinstance(op_id, int) or isinstance(op_id, bool)
+                    or not 0 <= op_id < len(circuit.ops)
+                    or circuit.ops[op_id].kind != "T"):
+                errs.append("magic-state consumption does not match a T-gate start")
+            consumed_ids.append(op_id)
             stock -= 1
             if stock < 0:
-                errs.append("magic-state inventory became negative")
+                errs.append(f"magic-state inventory became negative at t={time}")
+
     t_ops = {e["id"] for e in op_events if 0 <= e.get("id", -1) < len(circuit.ops)
              and circuit.ops[e["id"]].kind == "T"}
-    consumed_ids = [e.get("op_id") for e in magic_events if e["kind"] == "magic_consume"]
     if len(consumed_ids) != len(t_ops) or set(consumed_ids) != t_ops:
         errs.append("magic-state consumption events do not match T-gate executions")
     return errs
