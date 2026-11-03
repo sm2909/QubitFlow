@@ -39,7 +39,7 @@ The synthetic `qft_topology` generator is only an interaction-topology workload:
 
 | Policy | Meaning |
 |---|---|
-| `lsqca_lazy` | Program-order issue, demand loads, LRU eviction |
+| `lsqca_lazy` | QubitFlow's program-order demand/LRU reference (not a full LSQCA policy reproduction) |
 | `fixed_prefetch(W)` | Program-order issue, bounded lookahead prefetch, LRU |
 | `fixed_farthest_next_use` | Program-order issue with offline farthest-next-use replacement |
 | `dag_lru` | DAG-ready scheduling with LRU replacement |
@@ -47,7 +47,7 @@ The synthetic `qft_topology` generator is only an interaction-topology workload:
 | `dag_next_use_nearest` | Same DAG scheduler with nearest-row demand-transfer arbitration |
 | `joint-prefetch(W)` | DAG-ready issue, DAG-aware replacement, demand arbitration and bounded in-flight/resident prefetch (W=1/2/4) |
 
-Farthest-next-use is an offline Belady-inspired baseline for fixed-order issue, not a deployable online policy or an optimal oracle under this nonuniform transfer-cost model. The joint policy is a heuristic, not an optimizer or proof of optimality.
+Farthest-next-use is an offline Belady-inspired baseline for fixed-order issue, not a deployable online policy or an optimal oracle under this nonuniform transfer-cost model. `lsqca_lazy` is QubitFlow's simple demand-paging reference policy; it is not a full reproduction of every LSQCA compiler/runtime optimization. The joint policy is a heuristic, not an optimizer or proof of optimality.
 
 ## Experiments
 
