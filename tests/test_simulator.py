@@ -350,7 +350,7 @@ class SimulatorTests(unittest.TestCase):
 
     def test_validator_rejects_missing_factory_production_event(self):
         circ = core.Circuit.from_gates(1, [("t", (0,)) for _ in range(5)])
-        timing = core.Timing(magic_buffer=2, magic_interval=15)
+        timing = core.Timing(magic_buffer=2, magic_interval=3)
         cfg = make_cfg(1, timing=timing)
         sim = core.Simulator(
             circ, cfg, make_policy("joint", prefetch_width=1),
