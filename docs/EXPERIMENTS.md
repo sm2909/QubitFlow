@@ -53,7 +53,8 @@ The policy-ablation and two-qubit timing axes use different policy sets and refe
 Primary outcome: `cycles`, the makespan in abstract code beats.
 
 Secondary outcomes:
-- `loads`, `stores`, and `transfers`;
+- `loads`, `stores`, and `transfers`, with every load labelled as demand or prefetch;
+- speculative-prefetch loads, first-use events, evictions-before-use, and outstanding intents at makespan;
 - `total_transfer_cycles`, the sum of transfer durations (overlaps counted separately);
 - `exec_busy_cycles`, the union of gate execution intervals;
 - `non_exec_cycles`, makespan minus execution-busy union;
@@ -85,7 +86,7 @@ A successful CI run uploads:
 - `summary.md`: generated result tables and limitations;
 - `traces/*.jsonl.gz`: raw event streams for selected arithmetic workloads and representative policy ablations.
 
-The analysis script rejects missing/extra experiment groups, incomplete policy matrices, mismatched hardware parameters within a comparison group, and source/code hash mismatches.
+The analysis script rejects missing/extra experiment groups, incomplete policy matrices, mismatched hardware parameters within a comparison group, source/code hash mismatches, and violations of the prefetch lifecycle identity: loads = uses + evictions + outstanding intents.
 
 ## Interpretation limits
 
