@@ -327,6 +327,22 @@ class SimulatorTests(unittest.TestCase):
         self.assertTrue(all(e["time"] % 3 == 0 for e in production))
         self.assertEqual(sum(e["count"] for e in production), 4)
 
+    def test_validator_rejects_missing_factory_production_event(self):
+        circ = core.Circuit.from_gates(1, [("t", (0,)) for _ in range(5)])
+        timing = core.Timing(magic_buffer=2, magic_interval=15)
+        cfg = make_cfg(1, timing=timing)
+        sim = core.Simulator(
+            circ, cfg, make_policy("joint", prefetch_width=1),
+            initially_resident=True,
+        )
+        sim.run()
+        trace = [dict(event) for event in sim.trace]
+        production = next(e for e in trace
+                          if e["kind"] == "magic_produce" and e["time"] == 15)
+        trace.remove(production)
+        errors = core.validate_schedule(trace, circ, cfg, sim.initial_loc)
+        self.assertTrue(any("production mismatch" in error for error in errors), errors)
+
     def test_all_policies_produce_valid_trace(self):
         circ = core.adder(2)
         cfg = core.ArchConfig(
