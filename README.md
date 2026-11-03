@@ -42,10 +42,12 @@ The synthetic `qft_topology` generator is only an interaction-topology workload:
 | `lsqca_lazy` | Program-order issue, demand loads, LRU eviction |
 | `fixed_prefetch(W)` | Program-order issue, bounded lookahead prefetch, LRU |
 | `fixed_farthest_next_use` | Program-order issue with offline farthest-next-use replacement |
-| `dag_no_prefetch` | DAG-ready operation selection, demand loads, no prefetch |
+| `dag_lru` | DAG-ready scheduling with LRU replacement |
+| `dag_next_use` | DAG-ready scheduling with farthest-next-use replacement |
+| `dag_next_use_nearest` | Same DAG scheduler with nearest-row demand-transfer arbitration |
 | `joint-prefetch(W)` | DAG-ready issue, DAG-aware replacement, demand arbitration and bounded in-flight/resident prefetch (W=1/2/4) |
 
-Belady is an offline oracle for fixed-order issue, not a deployable online policy. The joint policy is a heuristic, not an optimizer or proof of optimality.
+Farthest-next-use is an offline Belady-inspired baseline for fixed-order issue, not a deployable online policy or an optimal oracle under this nonuniform transfer-cost model. The joint policy is a heuristic, not an optimizer or proof of optimality.
 
 ## Experiments
 
@@ -58,7 +60,7 @@ Belady is an offline oracle for fixed-order issue, not a deployable online polic
 - Separate CNOT-duration sensitivity: 1, 2, 4 beats at CR=4, banks=2, access overhead=1.
 - One transfer lane per bank by default.
 
-Within each workload/configuration group, policy comparisons hold hardware parameters fixed. Changing bank count is an architecture sensitivity experiment and changes total SAM capacity. Results include workload provenance, full architecture parameters, policy parameters, Python version, makespan, transfer counts, non-compute cycles, MSF-blocked cycles, logical-cell count, and logical memory-cell fraction.
+Within each workload/configuration group, policy comparisons hold hardware parameters fixed. Changing bank count redistributes the same 144-cell SAM data budget across a different number of near-square banks; total data capacity is held constant. Results include workload provenance, full architecture parameters, policy parameters, Python version, makespan, transfer counts, non-compute cycles, MSF-blocked cycles, logical-cell count, and logical memory-cell fraction.
 
 For a policy-only comparison, select one fixed configuration (for example CR=4, banks=2) from the CSV. Do not compare rows with different architecture settings as if only the policy changed.
 
@@ -73,6 +75,6 @@ For a policy-only comparison, select one fixed configuration (for example CR=4, 
 
 ## References
 
-- Kobori et al., “LSQCA: Resource-Efficient Load/Store Architecture for Limited-Scale Fault-Tolerant Quantum Computing,” HPCA 2025.
-- Duckering et al., “Virtualized Logical Qubits: A 2.5D Architecture for Error-Corrected Quantum Computing,” MICRO 2020.
-- QASMBench, PNNL: https://github.com/pnnl/QASMBench
+- Takumi Kobori, Yasunari Suzuki, Yosuke Ueno, Teruo Tanimoto, Synge Todo, and Yuuki Tokunaga. “LSQCA: Resource-Efficient Load/Store Architecture for Limited-Scale Fault-Tolerant Quantum Computing.” HPCA 2025, pp. 304–320. DOI: 10.1109/HPCA61900.2025.00033. Preprint: https://arxiv.org/abs/2412.20486.
+- Casey Duckering, Jonathan M. Baker, David I. Schuster, and Frederic T. Chong. “Virtualized Logical Qubits: A 2.5D Architecture for Error-Corrected Quantum Computing.” MICRO 2020, pp. 173–185. DOI: 10.1109/MICRO50266.2020.00026. Preprint: https://arxiv.org/abs/2009.01982.
+- Ang Li, Samuel Stein, Sriram Krishnamoorthy, and James Ang. “QASMBench: A Low-Level Quantum Benchmark Suite for NISQ Evaluation and Simulation.” ACM Transactions on Quantum Computing 4(2), 2023. DOI: 10.1145/3550488. Source: https://github.com/pnnl/QASMBench.
