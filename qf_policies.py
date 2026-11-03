@@ -50,7 +50,12 @@ class FixedOrderPolicy:
                 missing_head = sum(sim.state(x) == "SAM" for x in protected)
                 reserve = 0 if demand else missing_head
                 if sim.free_slots() > reserve:
-                    progress |= sim.try_load(q)
+                    if demand:
+                        progress |= sim.try_load(q, purpose="demand")
+                    else:
+                        progress |= sim.try_load(
+                            q, purpose="prefetch", consumer_op_id=i
+                        )
                 elif demand:
                     # Prefetch is opportunistic: never evict solely to prefetch.
                     if sim.free_slots() + sim.pending_stores() >= missing_head:
@@ -270,10 +275,12 @@ class JointPolicy:
             # (in flight or resident), not merely a per-call issue count.
             available = max(0, self.prefetch_width - len(self.prefetched_qubits))
             count = 0
-            for _, q in prefetch_requests:
+            for consumer_op_id, q in prefetch_requests:
                 if count >= available or sim.free_slots() <= 0:
                     break
-                if sim.try_load(q):
+                if sim.try_load(
+                    q, purpose="prefetch", consumer_op_id=consumer_op_id
+                ):
                     progress = True
                     count += 1
                     self.prefetched_qubits.add(q)
