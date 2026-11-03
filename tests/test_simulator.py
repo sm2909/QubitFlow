@@ -142,6 +142,32 @@ class ConfigAndCircuitTests(unittest.TestCase):
         }
         self.assertEqual(len(names), 3)
 
+    def test_prefetch_window_ignores_preexisting_started_consumers(self):
+        circ = core.Circuit.from_gates(1, [
+            ("h", (0,)),
+            ("t", (0,)),
+        ])
+        cfg = core.ArchConfig(
+            cr_slots=2, n_banks=1, bank_capacity=1, bank_width=1,
+        )
+        sim = core.Simulator(
+            circ, cfg, make_policy("joint", prefetch_width=1),
+            initially_resident=True,
+        )
+        policy = sim.policy
+        # Operation 0 started before q0 was speculatively loaded for op1.
+        sim.started.add(0)
+        policy.prefetched_qubits.add(0)
+        policy._prefetched_started[0] = frozenset(sim.started)
+        policy._refresh_prefetch_window(sim)
+        self.assertIn(0, policy.prefetched_qubits)
+
+        # Once a new consumer starts after prefetch, the slot is released.
+        sim.started.add(1)
+        policy._refresh_prefetch_window(sim)
+        self.assertNotIn(0, policy.prefetched_qubits)
+        self.assertNotIn(0, policy._prefetched_started)
+
     def test_joint_prefetch_window_is_persistent_and_overlaps_execution(self):
         circ = core.Circuit.from_gates(4, [
             ("h", (0,)), ("h", (1,)), ("cx", (0, 1)),
