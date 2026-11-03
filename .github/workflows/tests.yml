@@ -35,6 +35,7 @@ jobs:
             policy_summary.csv
             workload_geomeans.csv
             workload_class_summary.csv
+            prefetch_summary.csv
             summary.md
             experiment_manifest.json
             traces/
