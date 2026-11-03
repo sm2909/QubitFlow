@@ -97,9 +97,11 @@ class JointPolicy:
         # Qubits in this set were loaded speculatively and remain counted
         # against the configured window until the first consuming op starts.
         self.prefetched_qubits = set()
-        # Snapshot each speculative qubit's next unstarted consumer. The
-        # simulator's per-qubit cursor advances only when a consuming gate starts.
+        # Active window: speculative qubits currently in transfer or resident.
         self._prefetched_next_use = {}
+        # Suppression map: do not retry a speculative load for the same next use
+        # after eviction; otherwise zero-cost load/evict cycles are possible.
+        self._prefetch_attempted_for = {}
         self._critical = None
         self._depth = None
 
@@ -136,11 +138,15 @@ class JointPolicy:
         return (resident, critical[op_id], -op_id)
 
     def _refresh_prefetch_window(self, sim):
-        """Release slots after a post-prefetch consumer starts or qubit is evicted."""
+        """Release active slots and retry suppression after a consumer starts."""
         consumed = {
-            q for q, expected_next_use in self._prefetched_next_use.items()
+            q for q, expected_next_use in self._prefetch_attempted_for.items()
             if sim.next_use(q) != expected_next_use
         }
+        for q in consumed:
+            self._prefetch_attempted_for.pop(q, None)
+            self._prefetched_next_use.pop(q, None)
+
         self.prefetched_qubits = {
             q for q in self.prefetched_qubits
             if q not in consumed and sim.state(q) in ("XFER", "CR")
@@ -150,6 +156,10 @@ class JointPolicy:
             for q, expected_next_use in self._prefetched_next_use.items()
             if q in self.prefetched_qubits
         }
+
+    def _prefetch_allowed(self, sim, q):
+        """Do not retry a speculative load until its snapshotted consumer starts."""
+        return q not in self._prefetch_attempted_for
 
     def _next_use_key(self, sim, q, critical, depth):
         use = sim.next_use(q)
@@ -249,7 +259,8 @@ class JointPolicy:
             seen_qubits = set()
             for op_id in frontier:
                 for q in sim.circuit.ops[op_id].qubits:
-                    if q not in seen_qubits and sim.state(q) == "SAM":
+                    if (q not in seen_qubits and sim.state(q) == "SAM"
+                            and self._prefetch_allowed(sim, q)):
                         prefetch_requests.append((op_id, q))
                         seen_qubits.add(q)
             prefetch_requests.sort(
@@ -266,7 +277,9 @@ class JointPolicy:
                     progress = True
                     count += 1
                     self.prefetched_qubits.add(q)
-                    self._prefetched_next_use[q] = sim.next_use(q)
+                    expected_next_use = sim.next_use(q)
+                    self._prefetched_next_use[q] = expected_next_use
+                    self._prefetch_attempted_for[q] = expected_next_use
         return progress
 
 
