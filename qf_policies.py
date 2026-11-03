@@ -66,8 +66,9 @@ class JointPolicy:
     duration-weighted critical path, then stable operation ID. Residency uses
     either LRU or a DAG-aware farthest-next-use estimate. Demand transfers are
     ordered either by operation criticality or by shortest current row travel.
-    Optional prefetch loads operands for operations whose remaining predecessors
-    are already in flight; it never evicts a resident qubit to prefetch.
+    Optional prefetch loads operands for operations whose predecessors have
+    started and at least one remains in flight; it never evicts for prefetch.
+    Static weighted topological depth and critical path are cached per circuit.
     """
 
     def __init__(
@@ -94,52 +95,51 @@ class JointPolicy:
         # Qubits in this set were loaded speculatively and remain counted
         # against the configured window until the first consuming op starts.
         self.prefetched_qubits = set()
+        self._prefetched_started = {}
+        self._critical = None
+        self._depth = None
 
     def _graph(self, sim):
-        n = len(sim.circuit.ops)
-        succ = [[] for _ in range(n)]
-        for node, parents in enumerate(sim.circuit.preds):
-            for parent in parents:
-                succ[parent].append(node)
+        """Compute duration-weighted DAG depth/critical paths once per policy."""
+        if self._critical is None:
+            n = len(sim.circuit.ops)
+            successors = [[] for _ in range(n)]
+            for node, parents in enumerate(sim.circuit.preds):
+                for parent in parents:
+                    successors[parent].append(node)
 
-        durations = [
-            sim.cfg.timing.op_duration(op.kind, op.name)
-            for op in sim.circuit.ops
-        ]
-        critical = [0] * n
-        for node in range(n - 1, -1, -1):
-            critical[node] = durations[node] + max(
-                (critical[child] for child in succ[node]), default=0
-            )
-
-        remaining_memo = {}
-
-        def remaining_path(node):
-            if node in sim.finished:
-                return 0
-            if node not in remaining_memo:
-                parents = [p for p in sim.circuit.preds[node] if p not in sim.finished]
-                remaining_memo[node] = durations[node] + max(
-                    (remaining_path(parent) for parent in parents), default=0
+            durations = [
+                sim.cfg.timing.op_duration(op.kind, op.name)
+                for op in sim.circuit.ops
+            ]
+            depth = [0] * n
+            for node, parents in enumerate(sim.circuit.preds):
+                depth[node] = durations[node] + max(
+                    (depth[parent] for parent in parents), default=0
                 )
-            return remaining_memo[node]
 
-        remaining = [remaining_path(i) for i in range(n)]
-        return critical, remaining
+            critical = [0] * n
+            for node in range(n - 1, -1, -1):
+                critical[node] = durations[node] + max(
+                    (critical[child] for child in successors[node]), default=0
+                )
+            self._critical, self._depth = critical, depth
+        return self._critical, self._depth
 
     def _rank(self, sim, op_id, critical):
         op = sim.circuit.ops[op_id]
         resident = sum(sim.state(q) == "CR" for q in op.qubits)
         return (resident, critical[op_id], -op_id)
 
-    def _next_use_key(self, sim, q, critical, remaining):
-        uses = [i for i in sim.circuit.uses[q] if i not in sim.started]
-        if not uses:
+    def _next_use_key(self, sim, q, critical, depth):
+        use = sim.next_use(q)
+        if use == INF:
             return (float("inf"), 0, float("inf"))
-        use = min(uses, key=lambda i: (remaining[i], -critical[i], i))
-        return (remaining[use], -critical[use], use)
+        # Static weighted topological depth estimates when the next use becomes
+        # dependency-reachable; the critical-path tie-break protects urgent uses.
+        return (depth[use], -critical[use], use)
 
-    def _victim(self, sim, protected, critical, remaining):
+    def _victim(self, sim, protected, critical, depth):
         candidates = [q for q in sim.loc if sim.state(q) == "CR"
                       and q not in sim.busy and q not in protected]
         if not candidates:
@@ -149,8 +149,8 @@ class JointPolicy:
         return max(
             candidates,
             key=lambda q: (
-                self._next_use_key(sim, q, critical, remaining)[0],
-                self._next_use_key(sim, q, critical, remaining)[1],
+                self._next_use_key(sim, q, critical, depth)[0],
+                self._next_use_key(sim, q, critical, depth)[1],
                 -sim.last_used[q],
                 -q,
             ),
@@ -180,14 +180,23 @@ class JointPolicy:
         # Release the slot only after a consumer starts or the qubit leaves CR/SAM
         # due to an eviction/transfer decision.
         consumed = {
-            q for op_id in sim.started
-            for q in sim.circuit.ops[op_id].qubits
+            q for q, started_at_prefetch in self._prefetched_started.items()
+            if any(
+                op_id not in started_at_prefetch
+                and q in sim.circuit.ops[op_id].qubits
+                for op_id in sim.started
+            )
         }
         self.prefetched_qubits = {
             q for q in self.prefetched_qubits
             if q not in consumed and sim.state(q) in ("XFER", "CR")
         }
-        critical, remaining = self._graph(sim)
+        self._prefetched_started = {
+            q: started_at_prefetch
+            for q, started_at_prefetch in self._prefetched_started.items()
+            if q in self.prefetched_qubits
+        }
+        critical, depth = self._graph(sim)
         ready = sim.ready_ops()
         ranked = sorted(ready, key=lambda i: self._rank(sim, i, critical), reverse=True)
 
@@ -218,7 +227,7 @@ class JointPolicy:
         requests.sort(key=lambda item: self._transfer_key(sim, item[0], item[1], critical))
         for op_id, q in requests:
             if sim.free_slots() == 0:
-                victim = self._victim(sim, protected, critical, remaining)
+                victim = self._victim(sim, protected, critical, depth)
                 if victim is not None:
                     progress |= sim.try_store(victim)
             else:
@@ -229,7 +238,7 @@ class JointPolicy:
         # qubits needed by the currently selected ready-operation prefix.
         if self.prefetch and self.prefetch_width:
             frontier = self._prefetch_frontier(sim)
-            frontier.sort(key=lambda i: (remaining[i], -critical[i], i))
+            frontier.sort(key=lambda i: (depth[i], -critical[i], i))
             prefetch_requests = []
             seen_qubits = set()
             for op_id in frontier:
@@ -251,6 +260,7 @@ class JointPolicy:
                     progress = True
                     count += 1
                     self.prefetched_qubits.add(q)
+                    self._prefetched_started[q] = frozenset(sim.started)
         return progress
 
 
