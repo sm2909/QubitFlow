@@ -236,8 +236,14 @@ def write_trace(path, spec, cfg, policy_name, params, sim, result):
     path.parent.mkdir(parents=True, exist_ok=True)
     header = {
         "record_type": "metadata",
+        "source_revision": os.environ.get(
+            "QF_SOURCE_REVISION", os.environ.get("GITHUB_SHA", "unknown")
+        ),
+        "ci_checkout_revision": os.environ.get("GITHUB_SHA", "unknown"),
         "workload": spec["tag"],
         "source": spec["source"],
+        "source_url": spec.get("source_url", ""),
+        "source_sha256": sha256_file(spec["path"]) if spec.get("path") else "",
         "policy_key": policy_name,
         "policy_params": params,
         "architecture": {
