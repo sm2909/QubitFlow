@@ -159,6 +159,7 @@ class ConfigAndCircuitTests(unittest.TestCase):
         sim.started.add(0)
         policy.prefetched_qubits.add(0)
         policy._prefetched_next_use[0] = sim.next_use(0)
+        policy._prefetch_attempted_for[0] = sim.next_use(0)
         self.assertEqual(policy._prefetched_next_use[0], 1)
         policy._refresh_prefetch_window(sim)
         self.assertIn(0, policy.prefetched_qubits)
