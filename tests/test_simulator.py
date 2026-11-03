@@ -396,39 +396,56 @@ class SimulatorTests(unittest.TestCase):
         self.assertEqual(set(sim.ready_ops()), {3})
 
     def test_incremental_ready_frontier_matches_full_dag_scan(self):
-        circ = core.random_circuit(12, 120, seed=91)
-        cfg = core.ArchConfig(
-            cr_slots=8, n_banks=2, bank_capacity=12, bank_width=4,
+        circ = core.random_circuit(
+            2, 30, p_t=0.2, p_2q=0.5, seed=91
         )
-        sim = core.Simulator(circ, cfg, make_policy("dag_lru"))
-        for _ in range(500):
+        cfg = core.ArchConfig(
+            cr_slots=2,
+            n_banks=1,
+            bank_capacity=2,
+            bank_width=1,
+            max_parallel_ops=2,
+            timing=core.Timing(
+                magic_factories=100, magic_buffer=200, magic_interval=1000
+            ),
+        )
+        sim = core.Simulator(
+            circ, cfg, make_policy("dag_lru"), initially_resident=True
+        )
+        finished_all = False
+        for _ in range(1000):
             expected = {
                 i for i in range(len(circ.ops))
                 if i not in sim.started
                 and all(parent in sim.finished for parent in circ.preds[i])
             }
             self.assertEqual(set(sim.ready_ops()), expected)
+            if len(sim.finished) == len(circ.ops):
+                finished_all = True
+                break
+
+            progress = False
+            for op_id in sorted(sim.ready_ops()):
+                progress |= sim.try_exec(op_id)
+                sim._complete()  # Includes zero-duration operations.
+                expected = {
+                    i for i in range(len(circ.ops))
+                    if i not in sim.started
+                    and all(parent in sim.finished for parent in circ.preds[i])
+                }
+                self.assertEqual(set(sim.ready_ops()), expected)
+
+            if len(sim.finished) == len(circ.ops):
+                finished_all = True
+                break
             if sim.running:
                 sim.t = min(end for end, _ in sim.running)
                 sim._complete()
-            elif not sim._ready_ops:
-                break
-            else:
-                op_id = min(sim._ready_ops)
-                # Execute only when operands are resident in this focused
-                # frontier-state test; no transfers are needed for set checks.
-                for q in circ.ops[op_id].qubits:
-                    if sim.state(q) != "CR":
-                        self.skipTest("random frontier state needs a transfer")
-                sim.try_exec(op_id)
-        self.assertEqual(
-            set(sim.ready_ops()),
-            {
-                i for i in range(len(circ.ops))
-                if i not in sim.started
-                and all(parent in sim.finished for parent in circ.preds[i])
-            },
-        )
+            elif not progress:
+                self.fail("ready-frontier test made no progress")
+        self.assertTrue(finished_all, "did not complete the small resident circuit")
+        self.assertEqual(sim.next_use(0), float("inf"))
+        self.assertEqual(sim.next_use(1), float("inf"))
 
     def test_dag_dependencies_after_reordering(self):
         circ = core.Circuit.from_gates(2, [
