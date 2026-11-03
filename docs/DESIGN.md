@@ -53,7 +53,7 @@ The synthetic QFT workload captures a dense controlled-interaction topology only
 - The `lsqca_lazy` label denotes QubitFlow's simple program-order demand-paging LRU reference. It is not a full reproduction of the LSQCA paper's complete compiler/runtime policy.
 - Fixed-order LRU and fixed-order farthest-next-use use program-order issue.
 - Farthest-next-use is an offline Belady-inspired replacement baseline for a fixed sequence. With nonuniform transfer costs and bank contention it is not an optimal replacement oracle.
-- DAG-LRU changes gate ordering while keeping LRU replacement; DAG-farthest-next-use changes replacement while using the same DAG-ready issue heuristic.
+- DAG-LRU changes gate ordering while keeping LRU replacement; DAG-farthest-next-use changes replacement while using the same DAG-ready issue heuristic. Its next-use urgency is estimated from cached static duration-weighted topological depth, with critical-path urgency as a tie-break; this is a heuristic proxy, not a dynamic schedule-time prediction.
 - The nearest-transfer variant changes only demand-transfer ordering from critical-path priority to shortest current scan-row travel.
 - Joint scheduling combines DAG-ready operation selection, farthest-next-use residency, critical-path demand-transfer ordering, and dependency-frontier prefetch.
 
