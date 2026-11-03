@@ -169,6 +169,15 @@ class ConfigAndCircuitTests(unittest.TestCase):
         cfg = core.ArchConfig(n_banks=4, bank_capacity=8)
         self.assertEqual(cfg.bus_lanes, 4)
 
+    def test_experiment_bank_sweep_preserves_total_sam_budget(self):
+        import run as experiments
+        circuit = core.adder(2)
+        for banks in (1, 2, 4):
+            cfg = experiments.build_cfg(circuit, {
+                "cr_slots": 4, "n_banks": banks, "line_access_cost": 1
+            })
+            self.assertEqual(cfg.n_banks * cfg.bank_capacity, 144)
+
     def test_line_access_overhead_is_explicit(self):
         cfg = core.ArchConfig(
             cr_slots=2, n_banks=1, bank_capacity=8, bank_width=2,
