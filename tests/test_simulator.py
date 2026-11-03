@@ -140,12 +140,6 @@ class ConfigAndCircuitTests(unittest.TestCase):
             line_initial_row=0, line_access_cost=1, line_move_per_row=1,
             timing=core.Timing(t_2q=6),
         )
-        one, one_result = run_checked(
-            circ, "joint", cfg=cfg, initially_resident=False
-        )
-        two, two_result = run_checked(
-            circ, "joint", cfg=cfg, initially_resident=False
-        )
         # Use explicit policies: each has the same scheduler and architecture,
         # differing only in the maximum number of speculative qubits.
         one_sim = core.Simulator(circ, cfg, make_policy("joint", prefetch_width=1))
