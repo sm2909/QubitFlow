@@ -122,6 +122,8 @@ def validate_completeness(rows, manifest):
         baseline = observed["lsqca-lazy"]
         matched_fields = (
             "workload_tag", "workload_class", "benchmark_source",
+            "source_representation", "source_url", "upstream_revision",
+            "upstream_gate_count", "upstream_dual_gate_count", "upstream_depth",
             "source_path", "source_sha256", "n_qubits", "n_ops",
             "cr_slots", "n_banks", "bank_capacity", "bank_width", "bank_rows",
             "total_sam_data_cells", "bus_lanes",
