@@ -198,6 +198,16 @@ def main(results_path="results.csv", manifest_path="experiment_manifest.json"):
             speedup = base_cycles / cycles
             cycle_delta = cycles - base_cycles
             transfer_delta = int(row["transfers"]) - int(baseline["transfers"])
+            prefetch_loads = int(row["prefetch_loads"])
+            prefetch_uses = int(row["prefetch_uses"])
+            prefetch_evictions = int(row["prefetch_evictions"])
+            prefetch_unused = int(row["prefetch_unused"])
+            if prefetch_loads != prefetch_uses + prefetch_evictions + prefetch_unused:
+                raise ValueError(
+                    f"prefetch lifecycle mismatch in {group}/{policy}: "
+                    f"loads={prefetch_loads}, uses={prefetch_uses}, "
+                    f"evictions={prefetch_evictions}, outstanding={prefetch_unused}"
+                )
             per_workload[(axis, workload)][policy].append(speedup)
             per_axis[axis][policy].append(speedup)
             per_class[(axis, workload_class)][policy].append(speedup)
@@ -270,9 +280,7 @@ def main(results_path="results.csv", manifest_path="experiment_manifest.json"):
 
     prefetch_rows = []
     for (group, policies) in sorted(groups.items()):
-        if not group.startswith(tuple(
-            f"{workload['tag']}:policy_ablation" for workload in manifest["workloads"]
-        )):
+        if ":policy_ablation:" not in group:
             continue
         for policy, row in sorted(policies.items()):
             loads = int(row["prefetch_loads"])
